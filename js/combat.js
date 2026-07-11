@@ -2,19 +2,34 @@
 // the logic. The swing is a 3-phase state machine (windup/active/recovery);
 // the hitbox is an arc sector owned by the state machine, never the sprite.
 const COMBAT = Object.freeze({
-  // player swing (seconds)
-  WINDUP: 0.07,
-  ACTIVE: 0.12,
-  RECOVERY: 0.16,
+  // the 3-swing combo: anticipation -> strike -> follow-through -> recovery.
+  // angles are radians relative to the facing angle; `cock` is the anticipation
+  // pull-back BEYOND the start angle; strike sweeps cock -> end with hard
+  // ease-out; `cancel` is the recovery fraction after which the next swing may
+  // chain (>1 = never cancellable).
+  SWINGS: Object.freeze([
+    Object.freeze({ // 1: forehand sweep, 140°
+      windup: 0.07, strike: 0.08, follow: 0.10, recover: 0.10,
+      cock: -1.66, start: -1.22, end: 1.22,
+      arcHalf: 1.05, radius: 58, dmg: 1, lunge: 130, trail: 1.0, cancel: 0.4,
+    }),
+    Object.freeze({ // 2: backhand return, 160° — starts where hit 1 ended
+      windup: 0.05, strike: 0.075, follow: 0.09, recover: 0.10,
+      cock: 1.84, start: 1.4, end: -1.4,
+      arcHalf: 1.15, radius: 58, dmg: 1, lunge: 130, trail: 1.25, cancel: 0.4,
+    }),
+    Object.freeze({ // 3: spin finisher, 360° — hits all around
+      windup: 0.13, strike: 0.16, follow: 0.12, recover: 0.22,
+      cock: -2.0, start: -1.57, end: 4.71,
+      arcHalf: Math.PI, radius: 64, dmg: 2, lunge: 190, trail: 1.6, cancel: 1.1,
+    }),
+  ]),
   COOLDOWN: 0.06,
   BUFFER: 0.13,            // attack input buffer window
   COMBO_RESET: 0.6,
-  ARC_RADIUS: 58,
-  ARC_HALF_ANGLE: 1.05,    // ~120° sector
-  LUNGE_SPEED: 130,        // px/s forward during windup+active (~12 px total)
   MOVE_DAMP: 0.3,          // movement factor while swinging
-  DMG: 1,
-  DMG_FINISHER: 2,
+  TRAIL_FADE: 0.12,        // crescent fade after the strike ends
+  STAFF_IDLE_ANGLE: -Math.PI / 2,
   // impact feedback
   HITSTOP: 0.06,
   HITSTOP_KILL: 0.13,
@@ -71,12 +86,26 @@ function queueAttack(game) {
 
 function startSwing(game) {
   const p = game.player;
+  p.swing = COMBAT.SWINGS[p.combo];
   p.attackState = 'windup';
-  p.attackT = COMBAT.WINDUP;
+  p.attackT = p.swing.windup;
   p.attackAngle = DIR_ANGLE[p.dir];
   p.attackHit = new Set();
   p.attackBuffer = 0;
   p.comboIdleT = 0;
+}
+
+function chainOrEnd(game) {
+  const p = game.player;
+  const finisher = p.combo === 2;
+  p.attackState = 'none';
+  p.combo = finisher ? 0 : p.combo + 1;
+  p.comboIdleT = 0;
+  p.attackCooldownT = COMBAT.COOLDOWN;
+  if (p.attackBuffer > 0) {
+    p.attackCooldownT = 0;
+    startSwing(game);
+  }
 }
 
 function updatePlayerCombat(game, dt) {
@@ -94,12 +123,13 @@ function updatePlayerCombat(game, dt) {
     return;
   }
 
+  const sw = p.swing;
   p.attackT -= dt;
 
   if (p.attackState === 'windup' || p.attackState === 'active') {
     // committed forward lunge
-    const nx = p.x + Math.cos(p.attackAngle) * COMBAT.LUNGE_SPEED * dt;
-    const ny = p.y + Math.sin(p.attackAngle) * COMBAT.LUNGE_SPEED * dt;
+    const nx = p.x + Math.cos(p.attackAngle) * sw.lunge * dt;
+    const ny = p.y + Math.sin(p.attackAngle) * sw.lunge * dt;
     const r = p.radius;
     if (!isSolidAt(nx - r, p.y - r) && !isSolidAt(nx + r, p.y - r) &&
         !isSolidAt(nx - r, p.y + r) && !isSolidAt(nx + r, p.y + r)) p.x = nx;
@@ -115,32 +145,58 @@ function updatePlayerCombat(game, dt) {
       if (e.dazedT > 0) continue;
       const dx = e.x - p.x, dy = e.y - p.y;
       const d = Math.hypot(dx, dy);
-      if (d > COMBAT.ARC_RADIUS + e.radius) continue;
-      if (Math.abs(angleDiff(Math.atan2(dy, dx), p.attackAngle)) > COMBAT.ARC_HALF_ANGLE) continue;
+      if (d > sw.radius + e.radius) continue;
+      if (Math.abs(angleDiff(Math.atan2(dy, dx), p.attackAngle)) > sw.arcHalf) continue;
       p.attackHit.add(e);
       hitEnemy(game, e, p.combo === 2);
     }
   }
 
+  // recovery is cancellable into the next swing after the cancel fraction
+  if (p.attackState === 'recovery' && p.attackBuffer > 0) {
+    const elapsed = 1 - p.attackT / sw.recover;
+    if (elapsed > sw.cancel) { chainOrEnd(game); return; }
+  }
+
   if (p.attackT <= 0) {
     if (p.attackState === 'windup') {
       p.attackState = 'active';
-      p.attackT = COMBAT.ACTIVE;
+      p.attackT = sw.strike;
     } else if (p.attackState === 'active') {
+      p.attackState = 'follow';
+      p.attackT = sw.follow;
+    } else if (p.attackState === 'follow') {
       p.attackState = 'recovery';
-      p.attackT = COMBAT.RECOVERY;
+      p.attackT = sw.recover;
     } else {
-      p.attackState = 'none';
-      p.combo = (p.combo + 1) % 3;
-      p.comboIdleT = 0;
-      p.attackCooldownT = COMBAT.COOLDOWN;
-      // buffered swing chains the combo the frame recovery ends
-      if (p.attackBuffer > 0) {
-        p.attackCooldownT = 0;
-        startSwing(game);
-      }
+      chainOrEnd(game);
     }
   }
+}
+
+// current staff pose for rendering: absolute angle, angular velocity, and how
+// far the strike has swept (for trail geometry)
+function staffPose(p) {
+  const sw = p.swing;
+  const th = p.attackAngle;
+  if (p.attackState === 'windup') {
+    const u = clamp(1 - p.attackT / sw.windup, 0, 1);
+    return { ang: th + lerp(sw.start * 0.3, sw.cock, u * u), vel: 0, swept: 0 };
+  }
+  if (p.attackState === 'active') {
+    const u = clamp(1 - p.attackT / sw.strike, 0, 1);
+    const eased = 1 - Math.pow(1 - u, 4);                 // hard ease-out
+    const ang = th + lerp(sw.cock, sw.end, eased);
+    const vel = (4 * Math.pow(1 - u, 3) * (sw.end - sw.cock)) / sw.strike;
+    return { ang, vel, swept: Math.abs(sw.end - sw.cock) * eased };
+  }
+  if (p.attackState === 'follow') {
+    return { ang: th + sw.end, vel: 0, swept: Math.abs(sw.end - sw.cock) };
+  }
+  // recovery: settle back toward the idle upright hold
+  const u = clamp(1 - p.attackT / sw.recover, 0, 1);
+  const s = u * u * (3 - 2 * u);
+  return { ang: lerp(th + sw.end, COMBAT.STAFF_IDLE_ANGLE, s), vel: 0, swept: 0 };
 }
 
 // A landed hit fires ALL feedback simultaneously: hitstop, flash, knockback,
@@ -163,16 +219,18 @@ function hitEnemy(game, e, finisher) {
     return;
   }
 
-  const dmg = finisher ? COMBAT.DMG_FINISHER : COMBAT.DMG;
+  const dmg = p.swing.dmg;
   const kb = COMBAT.KB_ENEMY * (finisher ? COMBAT.KB_FINISHER_MULT : 1);
+  if (finisher) game.shake(0.12, 0.01);
   e.hp -= dmg;
   e.flashT = COMBAT.FLASH_TIME;
   e.squashT = COMBAT.SQUASH_TIME;
   e.staggerT = finisher ? COMBAT.STAGGER_FINISHER : COMBAT.STAGGER;
   e.kbx = (e.kbx || 0) + Math.cos(ang) * kb;
   e.kby = (e.kby || 0) + Math.sin(ang) * kb;
-  const hitX = p.x + Math.cos(p.attackAngle) * (COMBAT.ARC_RADIUS * 0.7);
-  const hitY = p.y + Math.sin(p.attackAngle) * (COMBAT.ARC_RADIUS * 0.7);
+  const hitAng = Math.atan2(e.y - p.y, e.x - p.x);
+  const hitX = p.x + Math.cos(hitAng) * (p.swing.radius * 0.7);
+  const hitY = p.y + Math.sin(hitAng) * (p.swing.radius * 0.7);
   game.burst(hitX, hitY - 10, finisher ? 12 : 8, PALETTE.fx.flash);
 
   if (e.hp <= 0) {

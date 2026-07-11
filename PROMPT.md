@@ -204,3 +204,38 @@ You are adding **cozy "bonk" combat** to the existing game. This is a feature ad
 **Player health & death:** 3 hearts (half-heart granularity) drawn as storybook hearts under the HUD panels. On damage: **1000 ms i-frames with sprite flicker**, knockback with control locked 150 ms, small shake. At 0 hearts: soft cream fade (no death text), respawn at the spawn clearing with full hearts and ALL progress kept, one-line dialog. Heart pickups heal 1 heart; trinkets are a counter in the HUD. Drops scatter with a random impulse, then magnet to the player after 300 ms.
 
 **Regression checklist before declaring done:** 60 fps with combat active; no console errors; same seed still generates the identical world; movement/interaction unchanged; enemies can never be multi-hit by one swing; hitstop never stops `requestAnimationFrame`.
+
+---
+
+## THE SWING ANIMATION UPDATE (feature-addition prompt — run after the combat update)
+
+You are upgrading the attack visuals: the staff must be a **visible, separately animated weapon**, and the 3-hit combo must be **three visually distinct swings**. Feature addition, not a rewrite.
+
+**Map of what exists:** the swing state machine and `COMBAT` constants live in `js/combat.js`; the player sprite (currently with a baked-in staff) in `js/sprites.js` (`drawPlayerBody`); player rendering in `js/game.js` (`drawPlayer`). Constraints: do NOT modify movement, hit-resolution feedback (hitstop/flash/knockback stay as specced), world code, or enemy AI. All new tunables go into the `COMBAT` block (a per-swing table). The old whole-sprite-rotation + fixed swoosh is replaced.
+
+**Weapon as a separate layer (the standard indie pivot technique):**
+- Remove the staff from the baked player sprites. Pre-render a staff sprite (grip at origin, shaft along +X, ~34 px, small knob at the tip) in both art treatments — ink-outlined for the forest, flat for the desert.
+- Idle/walk: staff held upright at the hand position (side mirrored with facing), bobbing with the walk cycle.
+- Attacking: the staff rotates around a hand pivot near the player's center. One choreography works for all four facings because all angles are relative to the facing angle θ.
+
+**Animation grammar (anticipation → strike → follow-through → recovery, never linear):**
+- **Anticipation** eases IN (quad): the staff pulls back ~25° BEYOND the swing's start angle; the body counter-leans. This phase telegraphs which swing is coming.
+- **Strike** eases OUT hard (quart): the entire arc is crossed in 60–80 ms — deliberately too fast to read as motion, which is what smears are for. Damage lands during this phase only.
+- **Follow-through**: the staff holds at full extension ~100 ms (sells weight). No trail during anticipation or follow-through — smears on non-strike frames read as noise.
+- **Recovery** eases in-out back to idle; cancellable into the next combo swing after 40% (the finisher is never cancellable).
+
+**The three swings (all angles relative to θ):**
+
+| | Swing | Arc | Phases (windup/strike/follow/recover) | Emphasis |
+|---|---|---|---|---|
+| 1 | Forehand sweep | −70° → +70° (140°) | 70 / 80 / 100 / 100 ms | thin crescent trail |
+| 2 | Backhand sweep (reverse) | +80° → −80° (160°) | 50 / 75 / 90 / 100 ms | starts where hit 1 ended — chains read as one motion; bigger trail |
+| 3 | **Spin finisher** | −90° → +270° (360°, hits all around) | 130 / 160 / 120 / 220 ms | exaggerated wind-up, biggest brightest trail, 2× damage & knockback, longer hitstop, small shake, stronger lunge |
+
+**Smears & trails (procedural, palette-locked, no gradients):**
+- **Crescent smear**: a tapered wedge behind the staff — thick at the leading edge, knife-thin at the tail — built from ~6 arc strips with stepped alpha (head ~0.8 → tail ~0.05) in the flash cream. Trail span grows with angular velocity. In the forest add a thin wobbly ink edge along the outer rim. Fades out ~120 ms after the strike ends.
+- **Afterimages**: 2–3 fading staff copies at angles just behind the current one during the strike (multiples-style smear).
+- **Tangential stretch**: scale the staff perpendicular to its shaft by up to ~1.5× proportional to instantaneous angular speed — a free smear frame.
+- Draw order: crescent → afterimages → player body → staff on top. The weapon is always the leading edge; trail geometry only ever spans backward.
+
+**Acceptance criteria:** each of the three swings is distinguishable in a single freeze-frame (direction of crescent, size of trail, spin coverage); the staff is visible at all times (idle, walking, all 4 facings, both biomes); anticipation pose visibly cocks before every strike; the finisher hits enemies on all sides; existing combat behavior (damage per swing, dedup, buffering, feedback) unchanged; 60 fps sustained while spamming combos; zero console errors; the desert staff has no ink outline and the forest staff does.

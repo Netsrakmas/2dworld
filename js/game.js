@@ -205,7 +205,7 @@
     if (game.touch.active) { ix += game.touch.dx; iy += game.touch.dy; }
     if (game.deathT !== null || p.hurtLockT > 0) { ix = 0; iy = 0; }
     updatePlayerCombat(game, dt);
-    if (p.attackState === 'windup' || p.attackState === 'active') {
+    if (p.attackState === 'windup' || p.attackState === 'active' || p.attackState === 'follow') {
       ix *= COMBAT.MOVE_DAMP; iy *= COMBAT.MOVE_DAMP;
     }
     const il = Math.hypot(ix, iy);
@@ -552,6 +552,51 @@
     }
   }
 
+  // tapered crescent smear: arc strips with stepped alpha, thick at the
+  // leading edge, knife-thin at the tail. Trail geometry only spans backward.
+  function drawCrescent(px, py, aHead, signedSpan, radius, style, fade) {
+    const strips = 6;
+    const dir = Math.sign(signedSpan) || 1;
+    const span = Math.abs(signedSpan);
+    if (span < 0.05 || fade <= 0) return;
+    ctx.save();
+    ctx.fillStyle = PALETTE.fx.flash;
+    for (let i = 0; i < strips; i++) {
+      const t0 = i / strips, t1 = Math.min(1, (i + 1) / strips + 0.05);
+      const a0 = aHead - dir * span * t0;
+      const a1 = aHead - dir * span * t1;
+      const rIn0 = lerp(radius * 0.4, radius * 0.92, t0);
+      const rIn1 = lerp(radius * 0.4, radius * 0.92, t1);
+      ctx.globalAlpha = 0.8 * Math.pow(1 - t0, 1.5) * fade;
+      ctx.beginPath();
+      ctx.arc(px, py, radius, a0, a1, dir > 0);
+      ctx.lineTo(px + Math.cos(a1) * rIn1, py + Math.sin(a1) * rIn1);
+      ctx.arc(px, py, (rIn0 + rIn1) / 2, a1, a0, dir < 0);
+      ctx.closePath();
+      ctx.fill();
+    }
+    if (style === 'forest') {
+      ctx.globalAlpha = 0.35 * fade;
+      ctx.strokeStyle = PALETTE.forest.ink;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(px, py, radius + 2, aHead - dir * span, aHead, dir < 0);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawStaff(px, py, ang, style, stretch, alphaMul) {
+    const spr = SPRITES.staff[style];
+    ctx.save();
+    if (alphaMul !== undefined) ctx.globalAlpha = alphaMul;
+    ctx.translate(px, py);
+    ctx.rotate(ang);
+    if (stretch && stretch > 1) ctx.scale(1, stretch); // tangential smear stretch
+    ctx.drawImage(spr.c, -spr.ax, -spr.ay);
+    ctx.restore();
+  }
+
   function drawPlayer(alpha, ox, oy, boil) {
     const p = game.player;
     // mercy-invincibility flicker
@@ -562,47 +607,53 @@
     const style = bl < 0.5 ? 'desert' : 'forest';
     const frame = p.moving ? ((p.walkT | 0) % 2) : 0;
     const spr = SPRITES.player[style][p.dir][frame][boil];
+    const side = p.dir === 2 ? -1 : 1;
+    const attacking = p.attackState !== 'none' && p.swing;
+    const pivotY = y - 20;
 
-    // swing swoosh under the player sprite
-    if (p.attackState === 'active' || (p.attackState === 'recovery' && p.attackT > COMBAT.RECOVERY * 0.5)) {
-      const prog = p.attackState === 'active'
-        ? 1 - p.attackT / COMBAT.ACTIVE
-        : 1;
-      const fade = p.attackState === 'recovery' ? (p.attackT / COMBAT.RECOVERY - 0.5) * 2 : 1;
-      const a0 = p.attackAngle - COMBAT.ARC_HALF_ANGLE * 0.85;
-      const a1 = a0 + COMBAT.ARC_HALF_ANGLE * 1.7 * Math.min(1, prog * 1.3);
-      ctx.save();
-      ctx.globalAlpha = 0.75 * fade;
-      ctx.strokeStyle = PALETTE.fx.flash;
-      ctx.lineWidth = 13;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.arc(x, y - 18, COMBAT.ARC_RADIUS * 0.82, a0, a1);
-      ctx.stroke();
-      if (style === 'forest') {
-        ctx.globalAlpha = 0.35 * fade;
-        ctx.strokeStyle = PALETTE.forest.ink;
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.arc(x, y - 18, COMBAT.ARC_RADIUS * 0.82 + 8, a0, a1);
-        ctx.stroke();
+    let pose = null, bodyLean = 0;
+    if (attacking) {
+      pose = staffPose(p);
+      const sw = p.swing;
+      const rel = angleDiff(pose.ang, p.attackAngle);
+      // body coils against the wind-up, leans into the swing
+      if (p.attackState === 'windup') bodyLean = -Math.sign(sw.end - sw.cock) * 0.16 * side;
+      else bodyLean = clamp(rel * 0.08, -0.2, 0.2) * side;
+
+      // crescent smear behind everything — strike only, fading through follow
+      const dirSign = Math.sign(sw.end - sw.cock) || 1;
+      if (p.attackState === 'active' && pose.swept > 0.05) {
+        const span = Math.min(pose.swept, 1.7 * sw.trail) * dirSign;
+        drawCrescent(x, pivotY, pose.ang, span, sw.radius, style, 1);
+        // afterimage multiples just behind the staff
+        for (let i = 1; i <= 3; i++) {
+          const trailAng = pose.ang - dirSign * Math.min(pose.swept, 0.9) * (i * 0.22);
+          drawStaff(x, pivotY, trailAng, style, 1, 0.3 - i * 0.08);
+        }
+      } else if (p.attackState === 'follow') {
+        const fade = 1 - clamp((p.swing.follow - p.attackT) / COMBAT.TRAIL_FADE, 0, 1);
+        const span = Math.min(Math.abs(sw.end - sw.cock), 1.7 * sw.trail) * dirSign;
+        drawCrescent(x, pivotY, p.attackAngle + sw.end, span, sw.radius, style, fade * 0.7);
       }
-      ctx.restore();
     }
 
-    // wind back, swing through, settle
-    let rot = 0;
-    const side = p.dir === 2 ? -1 : 1;
-    if (p.attackState === 'windup') rot = -0.3 * side;
-    else if (p.attackState === 'active') rot = lerp(-0.3, 0.45, 1 - p.attackT / COMBAT.ACTIVE) * side;
-    else if (p.attackState === 'recovery') rot = 0.45 * (p.attackT / COMBAT.RECOVERY) * side;
-
+    // body
     ctx.save();
     ctx.translate(Math.round(x), Math.round(y));
-    ctx.rotate(rot);
+    if (bodyLean) ctx.rotate(bodyLean);
     ctx.scale(2 - p.squash, p.squash);
     ctx.drawImage(spr.c, -spr.ax, -spr.ay);
     ctx.restore();
+
+    // the staff, always visible, always the leading edge
+    if (attacking) {
+      const stretch = 1 + Math.min(Math.abs(pose.vel) / 60, 0.5);
+      drawStaff(x, pivotY, pose.ang, style, stretch);
+    } else {
+      const bob = p.moving && frame ? 1.5 : 0;
+      const sway = Math.sin(game.time * 1.6) * 0.03;
+      drawStaff(x + 12 * side, y - 24 + bob, COMBAT.STAFF_IDLE_ANGLE + sway, style, 1);
+    }
   }
 
   // blit a creature sprite with combat feedback: hit flash swaps in the white

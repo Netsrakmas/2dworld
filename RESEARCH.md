@@ -75,6 +75,18 @@ Research conducted 2026-07-11 across practitioner sources (Twitter/X vibe-coding
 
 Key added sources: Zeldix ALttP sword data · Moonlighter wiki (3-hit combo, 2× finisher) · shoryuken.com SFV hitstop · SmashWiki hitlag · Eiserloh GDC 2016 trauma shake · maddythorson.medium.com Celeste forgiveness · gdkeys.com anatomy of an attack · pavcreations.com melee AI FSM · PlayableIntelligence/game-creator add-feature + game-designer skills · gamedev-skills game-feel SKILL.md · yfwangning/triz-guided-ai-gamedev-skill · Garden Story / Turnip Boy reviews.
 
+## 6. Swing-animation addendum (researched 2026-07-11 for the animation update)
+
+**Attack animation structure** (Slynyrd Pixelblog 9/56, GDKeys, GDQuest "Juicy Attack"): anticipation → strike → follow-through → recovery with asymmetric timing — ~1 frame of anticipation (Hollow Knight ships exactly that), the entire strike arc crossed in 2–4 frames (~60–80 ms), then a ~100 ms hold at full extension and an interruptible recovery. Strong extreme poses over in-betweens. **Smear frames** (stretch, afterimage multiples, or crescent wedges) go only on the fastest strike frames — on anticipation/follow-through they read as noise.
+
+**Separate-weapon-layer technique** (GDQuest, KidsCanCode, Godot/Unity tutorials): weapon sprite rotates around a hand/shoulder pivot; base rotation aims at facing so one swing animation serves all directions; sweeps of 90–180° for slashes, 360° for spins; easing is the key finding — **strike eases OUT hard** (quart/circ: instant max speed through contact, deceleration doubles as follow-through), anticipation eases in, never linear. Stretch the weapon tangentially ∝ angular velocity for a free smear.
+
+**3-hit combo choreography** (Hades slash-slash-thrust, Wind Waker horizontal/backhand/spin, Dead Cells alternation): alternate sweep direction per hit so chains read as one continuous motion; escalate arc and trail size per hit; the finisher gets the long wind-up, the biggest smear, hitstop, and a non-cancellable recovery. Chain windows ~150–400 ms after the strike via input buffering.
+
+**Canvas recipes**: pivot = translate/rotate; crescent = two-arc tapered wedge filled in stepped-alpha strips (thick at the leading edge, thin at the tail, trail always *behind* the weapon); afterimages = redraw the weapon at recent angles, oldest faintest (Kirupa motion-trail pattern).
+
+Key added sources: slynyrd.com Pixelblog 9 & 56 · gdquest.com juicy_attack · gdkeys.com anatomy-of-an-attack · Wikipedia/Bloop Animation smear frames · kidscancode.org melee recipes · febucci.com easing · kirupa.com motion trails · Hades/Wind Waker combo wikis.
+
 ## Key sources
 
 levels.io / @levelsio fly.pieter.com thread · github.com/EnzeD/vibe-coding · github.com/cpjet64/vibecoding prompt-engineering guide · github.com/PlayableIntelligence/game-creator · github.com/majidmanzarpour/threejs-game-skills · XDA-Developers "vibe coded a game with Claude Code" · harrynesbitt.com (Making of Alto's Adventure) · finji.co/games/overland · mexer.pigsell.com (Max Fiedler) · roughjs.com + shihn.ca/posts/2020/roughjs-algorithms · redblobgames.com/maps/terrain-from-noise · MDN Tilemaps & globalCompositeOperation · tympanus.net Codrops feTurbulence guide · camillovisini.com hand-drawn SVG motion · wertn.com Sylvain Tegroeg interview · valdemird.com game-feel-on-the-web · gamejuice.co.uk · designmodo.com long-shadows · mlpds.art hue-shifting guide · 2dwillneverdie.com sprite colors

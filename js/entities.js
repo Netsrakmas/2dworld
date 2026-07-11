@@ -31,7 +31,7 @@ function makePlayer() {
     iFrameT: 0, hurtLockT: 0,
     attackState: 'none', attackT: 0, attackAngle: 0,
     attackCooldownT: 0, attackBuffer: 0,
-    combo: 0, comboIdleT: 0, attackHit: null,
+    combo: 0, comboIdleT: 0, attackHit: null, swing: null,
   };
 }
 

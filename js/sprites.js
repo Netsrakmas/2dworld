@@ -413,18 +413,9 @@ function drawPlayerBody(ctx, w, h, rng, dir, frame, outline) {
   ctx.save();
   if (dir === 2) { ctx.translate(w, 0); ctx.scale(-1, 1); }
 
-  // staff (behind for down/side, in hand)
+  // (staff is a separate animated layer — see SPRITES.staff)
   const side = dir === 2 || dir === 3;
   const staffX = side ? cx + 13 : cx + 15;
-  ctx.strokeStyle = F.hoodDark; ctx.lineWidth = 4.2;
-  ctx.beginPath();
-  ctx.moveTo(staffX, h * 0.16 + bob * 0.5);
-  ctx.lineTo(staffX - 2, h * 0.94);
-  ctx.stroke();
-  if (outline) {
-    ctx.strokeStyle = withAlpha(F.ink, 0.5); ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(staffX, h * 0.16 + bob * 0.5); ctx.lineTo(staffX - 2, h * 0.94); ctx.stroke();
-  }
 
   // feet
   ctx.fillStyle = F.ink;
@@ -726,6 +717,30 @@ function buildSprites(seedInt) {
     starPath(ctx, 10, 9, 8, 4);
     ctx.fill(); ctx.stroke();
   });
+
+  // the staff: grip at the anchor, shaft along +X. Ink-outlined for the
+  // forest, flat for the desert — rotated around the hand pivot at runtime.
+  SPRITES.staff = {};
+  for (const style of ['forest', 'desert']) {
+    SPRITES.staff[style] = sprite(54, 18, 8, 9, (ctx) => {
+      const F = PALETTE.forest;
+      ctx.fillStyle = F.trunk;
+      rr(ctx, 4, 6.2, 42, 5.6, 2.8);
+      ctx.fill();
+      if (style === 'forest') {
+        ctx.strokeStyle = F.ink; ctx.lineWidth = 1.8;
+        ctx.stroke();
+      }
+      // gnarled knob at the tip
+      ctx.fillStyle = F.trunk;
+      ctx.beginPath(); ctx.arc(46, 9, 4.6, 0, Math.PI * 2); ctx.fill();
+      if (style === 'forest') ctx.stroke();
+      // grip wrap
+      ctx.fillStyle = F.hoodDark;
+      rr(ctx, 12, 5.6, 5, 6.8, 2);
+      ctx.fill();
+    });
+  }
 
   // player: [style][dir][frame][boil]
   SPRITES.player = {};
