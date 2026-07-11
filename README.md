@@ -14,8 +14,10 @@ For a shareable world, add a seed: `index.html?seed=yourname`. The same seed alw
 
 - **WASD / arrow keys** — walk (virtual joystick + tap on touch devices)
 - **E** — read signs, poke slimes, stare back at watchers
+- **Space / J** — bonk with the staff (on touch, tap the right side of the screen)
 - Find the **5 lost letters** (red dots on the minimap edge) scattered across both biomes
-- Ogres chase but only knock you back — this is a cozy world
+- Ogres telegraph a big slam — step out of the marked zone, then bonk them during the recovery. Defeated ogres get dazed with stars and poof into leaves, dropping hearts and trinkets
+- You have 3 hearts; running out just carries you softly back to the spawn clearing with everything you found
 - Wait for nightfall (~2 min): the light shifts and fireflies come out in the forest
 
 ## Code layout
@@ -28,5 +30,6 @@ For a shareable world, add a seed: `index.html?seed=yourname`. The same seed alw
 | `js/sketch.js` | Hand-drawn ink renderer (jittered double-stroked béziers, scalloped clouds) |
 | `js/sprites.js` | Pre-renders every prop/creature to offscreen canvases in both art styles |
 | `js/world.js` | Infinite chunked world: biome blend, stepped/murky ponds, prop placement, collision |
+| `js/combat.js` | All combat tunables (`COMBAT`) + swing state machine, hit resolution, damage, pickups |
 | `js/entities.js` | Player, ogres, slimes, watchers, letters, particles |
 | `js/game.js` | Fixed-timestep loop, camera, input, juice, day/night, minimap, UI |

@@ -45,6 +45,11 @@ const PALETTE = Object.freeze({
     firefly: '#F2E08A',
     watcher: '#4A3757',
   }),
+  fx: Object.freeze({
+    flash: '#FFF6E6',        // enemy hit flash (never pure white)
+    heart: '#D9564C',
+    trinket: '#F2C14E',
+  }),
   night: Object.freeze({
     noon: '#FFFFFF',
     dusk: '#F0B98A',

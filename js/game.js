@@ -4,6 +4,7 @@
   const ctx = canvas.getContext('2d');
   const hudLetters = document.getElementById('letters');
   const hudSeed = document.getElementById('seed');
+  const hudTrinkets = document.getElementById('trinkets');
   const dialogEl = document.getElementById('dialog');
 
   const params = new URLSearchParams(location.search);
@@ -23,6 +24,9 @@
     cam: { x: 0, y: 0, px: 0, py: 0 },
     shakeT: 0, shakeAmp: 0, freezeT: 0,
     hitCooldown: 0,
+    trinkets: 0,
+    deathT: null,
+    rings: [],
     collected: new Set(),
     dialogTimer: 0,
     fireflyTimer: 0,
@@ -41,6 +45,21 @@
   };
   game.floatText = (x, y, text) => {
     game.floatTexts.push({ x, y, text, t: 0 });
+  };
+  game.removeEntity = (e) => {
+    const i = game.entities.indexOf(e);
+    if (i >= 0) game.entities.splice(i, 1);
+    if (e.chunk && e.chunk.live) {
+      const j = e.chunk.live.indexOf(e);
+      if (j >= 0) e.chunk.live.splice(j, 1);
+    }
+  };
+  game.ring = (x, y) => {
+    game.rings.push({ x, y, t: 0 });
+    game.burst(x, y, 10, PALETTE.forest.groundSpeckle);
+  };
+  game.updateTrinketHud = () => {
+    hudTrinkets.innerHTML = `&#10022; ${game.trinkets} trinkets`;
   };
   game.collectLetter = (e) => {
     if (game.collected.has(e.idx)) return;
@@ -90,6 +109,7 @@
     keys[e.code] = true;
     if (game.state === 'title' && (e.code === 'Enter' || e.code === 'Space' || e.code === 'KeyE')) startGame();
     else if (e.code === 'KeyE' || e.code === 'Enter') tryInteract();
+    else if (e.code === 'Space' || e.code === 'KeyJ') queueAttack(game);
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
   });
   addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -102,7 +122,9 @@
       game.touch.ox = e.clientX; game.touch.oy = e.clientY;
       game.touch.dx = 0; game.touch.dy = 0;
     } else {
-      tryInteract();
+      // right-side tap: interact when something is near, otherwise bonk
+      if (nearestInteractable()) tryInteract();
+      else queueAttack(game);
     }
   });
   canvas.addEventListener('pointermove', (e) => {
@@ -124,7 +146,7 @@
 
   function startGame() {
     game.state = 'play';
-    showDialog('Find the <b>5 lost letters</b> scattered across the two worlds.<span class="hint">WASD / arrows to walk &middot; E to interact</span>');
+    showDialog('Find the <b>5 lost letters</b> scattered across the two worlds.<span class="hint">WASD / arrows to walk &middot; E to interact &middot; Space to bonk</span>');
   }
 
   function nearestInteractable() {
@@ -151,7 +173,6 @@
   /* ---------- simulation ---------- */
   function update(dt) {
     game.time += dt;
-    game.hitCooldown -= dt;
     if (game.dialogTimer > 0) {
       game.dialogTimer -= dt;
       if (game.dialogTimer <= 0) dialogEl.classList.remove('show');
@@ -161,10 +182,32 @@
     p.px = p.x; p.py = p.y;
     game.cam.px = game.cam.x; game.cam.py = game.cam.y;
 
+    // soft defeat: fade out, wake at the spawn clearing with everything kept
+    if (game.deathT !== null) {
+      game.deathT += dt;
+      if (game.deathT >= COMBAT.DEATH_FADE && p.hp <= 0) {
+        p.x = p.px = TILE * 0.5;
+        p.y = p.py = TILE * 0.5;
+        game.cam.x = game.cam.px = p.x;
+        game.cam.y = game.cam.py = p.y;
+        p.hp = COMBAT.MAX_HP;
+        p.iFrameT = COMBAT.IFRAMES;
+        p.knockX = p.knockY = 0;
+        p.attackState = 'none';
+        showDialog('You were carried back to safety. The world kept everything you found.');
+      }
+      if (game.deathT >= COMBAT.DEATH_FADE * 2) game.deathT = null;
+    }
+
     // input vector (keyboard + virtual joystick), normalized diagonals
     let ix = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
     let iy = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
     if (game.touch.active) { ix += game.touch.dx; iy += game.touch.dy; }
+    if (game.deathT !== null || p.hurtLockT > 0) { ix = 0; iy = 0; }
+    updatePlayerCombat(game, dt);
+    if (p.attackState === 'windup' || p.attackState === 'active') {
+      ix *= COMBAT.MOVE_DAMP; iy *= COMBAT.MOVE_DAMP;
+    }
     const il = Math.hypot(ix, iy);
     if (il > 1) { ix /= il; iy /= il; }
     p.moving = il > 0.15;
@@ -224,6 +267,11 @@
       else if (e.kind === 'slime') updateSlime(e, game, dt);
       else if (e.kind === 'watcher') updateWatcher(e, game, dt);
       else if (e.kind === 'letter') updateLetter(e, game, dt);
+      else if (e.kind === 'pickup') updatePickup(e, game, dt);
+    }
+    for (let i = game.rings.length - 1; i >= 0; i--) {
+      game.rings[i].t += dt;
+      if (game.rings[i].t > 0.35) game.rings.splice(i, 1);
     }
 
     // particles
@@ -396,6 +444,19 @@
       }
     }
 
+    // slam dust rings
+    for (const rg of game.rings) {
+      const prog = rg.t / 0.35;
+      ctx.globalAlpha = (1 - prog) * 0.8;
+      ctx.strokeStyle = PALETTE.forest.groundSpeckle;
+      ctx.lineWidth = 7 * (1 - prog) + 1;
+      ctx.beginPath();
+      ctx.ellipse(rg.x - ox, rg.y - oy, COMBAT.SLAM_RADIUS * (0.4 + 0.7 * prog),
+        COMBAT.SLAM_RADIUS * 0.7 * (0.4 + 0.7 * prog), 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
     // birds
     ctx.strokeStyle = withAlpha(PALETTE.forest.ink, 0.6);
     ctx.lineWidth = 2;
@@ -451,23 +512,123 @@
     }
 
     drawMinimap(vw);
+    if (game.state === 'play') drawHearts();
     if (game.touch.active) drawJoystick();
     if (game.state === 'title') drawTitle(vw, vh);
+
+    // soft defeat fade (cream, never black)
+    if (game.deathT !== null) {
+      const half = COMBAT.DEATH_FADE;
+      const a = game.deathT < half ? game.deathT / half : 1 - (game.deathT - half) / half;
+      ctx.fillStyle = withAlpha(PALETTE.forest.cream, clamp(a, 0, 1));
+      ctx.fillRect(0, 0, vw, vh);
+    }
+  }
+
+  function drawHearts() {
+    const p = game.player;
+    const size = 26, spacing = 32, x0 = 30, y0 = 172;
+    for (let i = 0; i < COMBAT.MAX_HP / 2; i++) {
+      const x = x0 + i * spacing;
+      ctx.fillStyle = PALETTE.forest.cream;
+      ctx.strokeStyle = PALETTE.forest.ink;
+      ctx.lineWidth = 2.4;
+      heartPath(ctx, x, y0, size);
+      ctx.fill(); ctx.stroke();
+      const halves = clamp(p.hp - i * 2, 0, 2);
+      if (halves > 0) {
+        ctx.save();
+        heartPath(ctx, x, y0, size);
+        ctx.clip();
+        ctx.fillStyle = PALETTE.fx.heart;
+        if (halves === 2) ctx.fillRect(x - size, y0 - size, size * 2, size * 2);
+        else ctx.fillRect(x - size, y0 - size, size, size * 2);
+        ctx.restore();
+        ctx.strokeStyle = PALETTE.forest.ink;
+        ctx.lineWidth = 2.4;
+        heartPath(ctx, x, y0, size);
+        ctx.stroke();
+      }
+    }
   }
 
   function drawPlayer(alpha, ox, oy, boil) {
     const p = game.player;
+    // mercy-invincibility flicker
+    if (p.iFrameT > 0 && ((game.time * 10) | 0) % 2 === 0 && game.deathT === null) return;
     const x = lerp(p.px, p.x, alpha) - ox;
     const y = lerp(p.py, p.y, alpha) - oy;
     const bl = blendAtTile(Math.floor(p.x / TILE), Math.floor(p.y / TILE));
     const style = bl < 0.5 ? 'desert' : 'forest';
     const frame = p.moving ? ((p.walkT | 0) % 2) : 0;
     const spr = SPRITES.player[style][p.dir][frame][boil];
+
+    // swing swoosh under the player sprite
+    if (p.attackState === 'active' || (p.attackState === 'recovery' && p.attackT > COMBAT.RECOVERY * 0.5)) {
+      const prog = p.attackState === 'active'
+        ? 1 - p.attackT / COMBAT.ACTIVE
+        : 1;
+      const fade = p.attackState === 'recovery' ? (p.attackT / COMBAT.RECOVERY - 0.5) * 2 : 1;
+      const a0 = p.attackAngle - COMBAT.ARC_HALF_ANGLE * 0.85;
+      const a1 = a0 + COMBAT.ARC_HALF_ANGLE * 1.7 * Math.min(1, prog * 1.3);
+      ctx.save();
+      ctx.globalAlpha = 0.75 * fade;
+      ctx.strokeStyle = PALETTE.fx.flash;
+      ctx.lineWidth = 13;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(x, y - 18, COMBAT.ARC_RADIUS * 0.82, a0, a1);
+      ctx.stroke();
+      if (style === 'forest') {
+        ctx.globalAlpha = 0.35 * fade;
+        ctx.strokeStyle = PALETTE.forest.ink;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(x, y - 18, COMBAT.ARC_RADIUS * 0.82 + 8, a0, a1);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // wind back, swing through, settle
+    let rot = 0;
+    const side = p.dir === 2 ? -1 : 1;
+    if (p.attackState === 'windup') rot = -0.3 * side;
+    else if (p.attackState === 'active') rot = lerp(-0.3, 0.45, 1 - p.attackT / COMBAT.ACTIVE) * side;
+    else if (p.attackState === 'recovery') rot = 0.45 * (p.attackT / COMBAT.RECOVERY) * side;
+
     ctx.save();
     ctx.translate(Math.round(x), Math.round(y));
+    ctx.rotate(rot);
     ctx.scale(2 - p.squash, p.squash);
     ctx.drawImage(spr.c, -spr.ax, -spr.ay);
     ctx.restore();
+  }
+
+  // blit a creature sprite with combat feedback: hit flash swaps in the white
+  // silhouette, squash eases back, dazed/telegraph decorations on top
+  function drawCreature(e, spr, x, y, leanRot) {
+    const k = e.squashT > 0 ? clamp(e.squashT / COMBAT.SQUASH_TIME, 0, 1) : 0;
+    const img = e.flashT > 0 ? flashOf(spr) : spr.c;
+    ctx.save();
+    ctx.translate(x, y);
+    if (leanRot) ctx.rotate(leanRot);
+    if (k) ctx.scale(1 + 0.25 * k, 1 - 0.25 * k);
+    ctx.drawImage(img, -spr.ax, -spr.ay);
+    ctx.restore();
+  }
+
+  function drawAlertBubble(x, y) {
+    ctx.fillStyle = PALETTE.forest.cream;
+    ctx.strokeStyle = PALETTE.forest.ink;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 10, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = PALETTE.forest.ink;
+    ctx.font = 'bold 14px Georgia, serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('!', x, y + 1);
   }
 
   function drawEntity(e, alpha, ox, oy, boil) {
@@ -475,18 +636,47 @@
     const y = Math.round(lerp(e.py, e.y, alpha) - oy);
     if (e.kind === 'ogre') {
       const spr = SPRITES.ogre[e.frame][boil];
-      ctx.drawImage(spr.c, x - spr.ax, y - spr.ay);
+      // slam target zone, shown on the ground during the windup telegraph
+      if (e.atkState === 'windup') {
+        ctx.fillStyle = withAlpha(PALETTE.forest.ink, 0.14 + 0.08 * Math.sin(game.time * 12));
+        ctx.beginPath();
+        ctx.ellipse(e.slamX - ox, e.slamY - oy, COMBAT.SLAM_RADIUS, COMBAT.SLAM_RADIUS * 0.7, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      let lean = 0;
+      if (e.atkState === 'windup') lean = -0.14;
+      else if (e.atkState === 'slam') lean = 0.18;
+      else if (e.atkState === 'recover') lean = 0.06;
+      drawCreature(e, spr, x, y, lean);
+      if (e.alertT > 0 || e.atkState === 'windup') drawAlertBubble(x, y - spr.ay - 6);
+      if (e.dazedT > 0) {
+        for (let i = 0; i < 3; i++) {
+          const a = game.time * 6 + (i * Math.PI * 2) / 3;
+          ctx.fillStyle = PALETTE.fx.trinket;
+          ctx.strokeStyle = PALETTE.forest.ink;
+          ctx.lineWidth = 1.2;
+          starPath(ctx, x + Math.cos(a) * 20, y - spr.ay + 4 + Math.sin(a) * 6, 5, 4);
+          ctx.fill(); ctx.stroke();
+        }
+      }
     } else if (e.kind === 'slime') {
       const spr = SPRITES.slime[e.frame][boil];
-      ctx.drawImage(spr.c, x - spr.ax, y - spr.ay);
+      drawCreature(e, spr, x, y, 0);
     } else if (e.kind === 'watcher') {
       const spr = SPRITES.watcher[boil];
-      ctx.drawImage(spr.c, x - spr.ax, y - spr.ay);
-      // pupil tracks the player
-      ctx.fillStyle = PALETTE.forest.ink;
-      ctx.beginPath();
-      ctx.ellipse(x + e.lookX * 3, y - 19 + e.lookY * 2.5, 2.6, 4, 0, 0, Math.PI * 2);
-      ctx.fill();
+      const spin = e.spinT > 0 ? (1 - e.spinT / 0.45) * Math.PI * 2 : 0;
+      drawCreature(e, spr, x, y, spin);
+      if (!spin) {
+        // pupil tracks the player
+        ctx.fillStyle = PALETTE.forest.ink;
+        ctx.beginPath();
+        ctx.ellipse(x + e.lookX * 3, y - 19 + e.lookY * 2.5, 2.6, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (e.kind === 'pickup') {
+      const spr = e.ptype === 'heart' ? SPRITES.heart : SPRITES.trinket;
+      const bob = Math.sin(e.bobT * 3) * 2.5;
+      ctx.drawImage(spr.c, x - spr.ax, y - spr.ay + bob);
     } else if (e.kind === 'sign') {
       const spr = SPRITES.sign;
       ctx.drawImage(spr.c, x - spr.ax, y - spr.ay);

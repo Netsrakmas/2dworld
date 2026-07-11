@@ -173,3 +173,34 @@ The player character is always drawn in storybook style, but in the desert their
 6. **Interaction & goal:** signs, letters, dialogue boxes, counter, title screen.
 7. **Life & juice:** ambient motion, particles, squash/stretch, shake, day/night, fireflies, minimap, touch controls.
 8. **Polish audit:** run the full acceptance-criteria checklist, fix everything that fails, then a final pass upgrading the three weakest-looking things on screen.
+
+---
+
+## THE COMBAT UPDATE (feature-addition prompt — run after the base game ships)
+
+You are adding **cozy "bonk" combat** to the existing game. This is a feature addition, not a rewrite.
+
+**Map of what exists:** movement/collision and the fixed-timestep loop live in `js/game.js`; creature AI in `js/entities.js`; pre-rendered sprites in `js/sprites.js`; every color in `js/palette.js`. Integration constraints:
+- Do NOT modify the existing movement, collision, camera, or world-generation code paths — add combat as new states alongside them. Regression check: walking, sliding along obstacles, letter collection, and interaction must behave exactly as before.
+- Every tunable (HP, damage, durations, ranges, impulses) goes in ONE frozen `COMBAT` constants block. Zero magic numbers in logic.
+- One mechanic per pass, in this order: player swing state machine → hit resolution → impact feedback → enemy attack/defeat states → health/death → pickups. Playtest between passes.
+
+**Tone rule:** picture-book bonk combat. No blood, no corpses, no "GAME OVER". Enemies get dazed with stars over their head and poof into leaves. Defeat of the player is a soft fade and "you were carried back to safety."
+
+**Player attack — 3-phase state machine** (hitbox belongs to the state machine, never to the sprite):
+- Input: Space / J (tap right side on touch when no interactable is near). Inputs during recovery are **buffered for 130 ms** and fire the frame recovery ends; buffer clears on taking damage.
+- Phases: windup **70 ms** → active **120 ms** → recovery **160 ms**, then **60 ms** cooldown (~2.5 swings/s). Movement damped to 30% during windup+active; small **12 px forward lunge** across windup+active.
+- Hitbox: **120° arc sector, radius 58 px**, centered on facing. Tested every active frame as circle-vs-sector against each enemy, with a per-swing `alreadyHit` set so each enemy takes damage **once per activation**.
+- 3-hit combo: a buffered swing chains; the 3rd hit deals **2× damage, 2× knockback, 130 ms hitstop**. Combo resets after 600 ms without attacking.
+
+**A landed hit must trigger SIMULTANEOUSLY (acceptance criteria, not polish):** 60 ms hitstop (130 ms on kill/finisher) that freezes simulation but never the render loop · enemy white-silhouette flash 100 ms (pre-rendered `source-in` copy, no per-frame filters) · knockback impulse 300 px/s decaying ×0.85/frame · squash 1.25×/0.75× easing back over 120 ms · 8–12 particles at the contact point · 200 ms AI stagger (400 ms on finisher). A whiffed swing triggers none of these. Screen shake on kills only — and shake offsets the camera, never entity positions.
+
+**Enemies:**
+- **Ogre (5 HP):** patrol → alert ("!" bubble, brief pause) → chase → when within 78 px, telegraphed **slam**: 500 ms windup (lean back, "!", target zone drawn on the ground where the slam will land) → 150 ms active (dust-ring effect; 1 heart damage + knockback if the player is inside the 55 px zone) → 700 ms vulnerable recovery. That windup-dodge-punish loop is the whole combat dance. Contact while chasing costs ½ heart. On 0 HP: dazed 800 ms with stars circling, then leaf-poof + drops 1 heart + 2–3 trinkets.
+- **Slime (1 HP):** stays gentle — one bonk splats it into a poof; 20% heart drop, 1 trinket. No contact damage; slimes are swing tutorials.
+- **Watcher:** unkillable and harmless; bonking it makes it spin, and the first bonk drops 2 trinkets. Reactivity without threat.
+- Defeated camp enemies come back only when their chunk regenerates (never on screen).
+
+**Player health & death:** 3 hearts (half-heart granularity) drawn as storybook hearts under the HUD panels. On damage: **1000 ms i-frames with sprite flicker**, knockback with control locked 150 ms, small shake. At 0 hearts: soft cream fade (no death text), respawn at the spawn clearing with full hearts and ALL progress kept, one-line dialog. Heart pickups heal 1 heart; trinkets are a counter in the HUD. Drops scatter with a random impulse, then magnet to the player after 300 ms.
+
+**Regression checklist before declaring done:** 60 fps with combat active; no console errors; same seed still generates the identical world; movement/interaction unchanged; enemies can never be multi-hit by one swing; hitstop never stops `requestAnimationFrame`.

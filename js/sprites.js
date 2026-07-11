@@ -40,6 +40,21 @@ function rr(ctx, x, y, w, h, r) {
   ctx.roundRect(x, y, w, h, r);
 }
 
+// lazily cached white-silhouette copy for the 100ms hit flash — pre-rendered
+// via source-in, never a per-frame filter
+function flashOf(spr) {
+  if (!spr.flash) {
+    const c = makeCanvas(spr.c.width, spr.c.height);
+    const ctx = c.getContext('2d');
+    ctx.drawImage(spr.c, 0, 0);
+    ctx.globalCompositeOperation = 'source-in';
+    ctx.fillStyle = PALETTE.fx.flash;
+    ctx.fillRect(0, 0, c.width, c.height);
+    spr.flash = c;
+  }
+  return spr.flash;
+}
+
 /* ---------------- desert props ---------------- */
 
 function drawCactus(ctx, w, h, rng, withArm) {
@@ -692,6 +707,25 @@ function buildSprites(seedInt) {
     SPRITES.leaf.push(sprite(14, 14, 7, 10, (ctx) => drawLeaf(ctx, 14, 14, R)));
   }
   SPRITES.letter = sprite(40, 32, 20, 28, (ctx) => drawLetter(ctx, 40, 32, R));
+
+  SPRITES.heart = sprite(26, 26, 13, 22, (ctx) => {
+    const F = PALETTE.forest;
+    blobShadow(ctx, 13, 22, 8, 3);
+    ctx.fillStyle = PALETTE.fx.heart;
+    ctx.strokeStyle = F.ink; ctx.lineWidth = 2;
+    heartPath(ctx, 13, 12, 16);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = PALETTE.fx.flash;
+    ctx.beginPath(); ctx.arc(9, 8, 2.2, 0, Math.PI * 2); ctx.fill();
+  });
+  SPRITES.trinket = sprite(20, 20, 10, 17, (ctx) => {
+    const F = PALETTE.forest;
+    blobShadow(ctx, 10, 17, 6, 2.4);
+    ctx.fillStyle = PALETTE.fx.trinket;
+    ctx.strokeStyle = F.ink; ctx.lineWidth = 1.8;
+    starPath(ctx, 10, 9, 8, 4);
+    ctx.fill(); ctx.stroke();
+  });
 
   // player: [style][dir][frame][boil]
   SPRITES.player = {};

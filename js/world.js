@@ -475,13 +475,13 @@ function isSolidAt(wx, wy) {
 }
 
 function evictFarChunks(pcx, pcy, onEvict) {
-  if (World.chunks.size <= 36) return;
-  let worst = null, worstD = -1;
-  for (const [key, ch] of World.chunks) {
-    const d = Math.abs(ch.cx - pcx) + Math.abs(ch.cy - pcy);
-    if (d > worstD) { worstD = d; worst = key; }
-  }
-  if (worst && worstD > 3) {
+  for (let n = 0; n < 4 && World.chunks.size > 36; n++) {
+    let worst = null, worstD = -1;
+    for (const [key, ch] of World.chunks) {
+      const d = Math.abs(ch.cx - pcx) + Math.abs(ch.cy - pcy);
+      if (d > worstD) { worstD = d; worst = key; }
+    }
+    if (!worst || worstD <= 3) return;
     const ch = World.chunks.get(worst);
     World.chunks.delete(worst);
     if (onEvict) onEvict(ch);

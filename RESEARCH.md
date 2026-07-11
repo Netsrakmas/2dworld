@@ -65,6 +65,16 @@ Research conducted 2026-07-11 across practitioner sources (Twitter/X vibe-coding
 - Minimap = 1px-per-tile cached offscreen canvas; virtual joystick on touch devices.
 - Fixed-timestep update + interpolated `requestAnimationFrame` render; no per-frame allocation.
 
+## 5. Combat addendum (researched 2026-07-11 for the combat update)
+
+**Design consensus for cozy top-down melee** (Zelda-likes, Moonlighter, Garden Story, Turnip Boy, Death's Door): wide forgiving swing arcs beat thrusts (Turnip Boy's thrust was widely criticized); attacks are 3-phase state machines (windup/active/recovery) with the hitbox bound to the state machine, never the sprite; no stamina (Garden Story's most-criticized mechanic); combat should be skippable; enemy telegraphs long (400–600 ms), player windups short (~70 ms). Cozy dressing: white flash + squash + poof-into-leaves, dazed stars instead of death, non-punitive respawn keeping all progress (Garden Story / Cozy Grove ethos).
+
+**Game-feel numbers** (GDC "Juice It or Lose It", SFV/Smash hitstop data, Eiserloh trauma-shake talk, agent-skill repos): hitstop 50–80 ms light / 120–160 ms kill, freezing simulation but never the render loop; knockback ~300 px/s decaying ×0.85/frame; i-frames 800–1000 ms with flicker; enemy flash 80–100 ms via pre-rendered white silhouette; squash 1.25/0.75 over 120 ms; input buffer 100–130 ms ("honor the intent, not the signal" — Maddy Thorson); shake = camera-only, kills only.
+
+**Prompt-spec craft for feature additions** (game-creator add-feature skill, triz-gamedev brief template, vibe-coding guides): open with a map of existing files and forbid rewrites ("do NOT modify movement; integrate as new states"); all tunables in one constants block; feedback written as *simultaneous acceptance criteria with numbers* (AI treats juice as optional polish otherwise); explicit hit-dedup spec (once per activation per enemy — else per-frame damage melts enemies); regression checklist attached to the prompt; one mechanic per pass.
+
+Key added sources: Zeldix ALttP sword data · Moonlighter wiki (3-hit combo, 2× finisher) · shoryuken.com SFV hitstop · SmashWiki hitlag · Eiserloh GDC 2016 trauma shake · maddythorson.medium.com Celeste forgiveness · gdkeys.com anatomy of an attack · pavcreations.com melee AI FSM · PlayableIntelligence/game-creator add-feature + game-designer skills · gamedev-skills game-feel SKILL.md · yfwangning/triz-guided-ai-gamedev-skill · Garden Story / Turnip Boy reviews.
+
 ## Key sources
 
 levels.io / @levelsio fly.pieter.com thread · github.com/EnzeD/vibe-coding · github.com/cpjet64/vibecoding prompt-engineering guide · github.com/PlayableIntelligence/game-creator · github.com/majidmanzarpour/threejs-game-skills · XDA-Developers "vibe coded a game with Claude Code" · harrynesbitt.com (Making of Alto's Adventure) · finji.co/games/overland · mexer.pigsell.com (Max Fiedler) · roughjs.com + shihn.ca/posts/2020/roughjs-algorithms · redblobgames.com/maps/terrain-from-noise · MDN Tilemaps & globalCompositeOperation · tympanus.net Codrops feTurbulence guide · camillovisini.com hand-drawn SVG motion · wertn.com Sylvain Tegroeg interview · valdemird.com game-feel-on-the-web · gamejuice.co.uk · designmodo.com long-shadows · mlpds.art hue-shifting guide · 2dwillneverdie.com sprite colors
