@@ -275,3 +275,42 @@ You are upgrading the game from "reads correctly" to "art-directed." Two problem
 **Acceptance criteria:** a 30-second stationary screen recording in each biome shows visible motion in ≥4 independent systems (cloud light, gust fronts, water, drifters); a gust event visibly travels across grass, particles, and cloud drift together; standing anywhere, the squint test shows one dominant focal area, not uniform salt-and-pepper; each region contains ≥2 discoverable set pieces connected by visible trails; prop layouts show clusters with true empty corridors (≥4 tiles) between them; both biomes still squint-match the original reference images; frame time budget: ≤10 non-source-over full-screen draws, no runtime blur.
 
 **Regression checklist:** 60 fps while walking through dense areas with all atmosphere on; zero console errors; same seed ⇒ identical world (placement rework changes layouts once — after it lands, determinism must hold again); letters, combat, camps, minimap all behave identically; chunk bake time stays under ~16 ms per chunk.
+
+---
+
+## THE CHARACTER ASSET PIPELINE (two-part spec: generation runbook + engine integration)
+
+Goal: replace the procedurally drawn characters (player, ogre, slime, watcher) with **production-grade illustrated sprite sheets with real animation frames**, generated with AI tooling, while the game stays no-build and double-click-openable and falls back to procedural sprites if sheets are missing.
+
+### Part A — Asset generation runbook (human + AI tools, outside the game code)
+
+**A1. Style anchor.** Prepend this to every generation prompt: *"hand-drawn storybook children's-book illustration, warm cozy palette, confident dark sepia ink outlines, soft flat watercolor-wash fills, flat ambient lighting, NO cast shadows, plain solid background, full-body game character, top-down-friendly 3/4 view. No photorealism, no 3D render, no gradients, no pixel art."* Attach the two original reference images as style references on every generation (Nano Banana Pro / Flux.2 multi-reference / Midjourney --sref / Scenario image references all support this).
+
+**A2. Identity from the existing game (the key trick).** Render each current procedural character at 4–8× scale from the game itself and use it as img2img/structure input (denoise ~0.45–0.65, or instruction-edit: "redraw this exact character as a storybook illustration, keep pose, proportions and colors"). This preserves the silhouettes and palette the game already established.
+
+**A3. Reference sheets, then poses.** For each character produce one canonical reference sheet (front/side/back, neutral pose, solid background). Generate all subsequent poses by conditioning on that sheet — never from text alone. One character per generation. If a character needs dozens of assets, bootstrap a character model/LoRA from the best 10–20 outputs (Scenario hosted training: 5–15 images, ~30–60 min; or ComfyUI/Kohya locally).
+
+**A4. Animation frames.**
+- *Idle / walk / hurt / death*: image-to-video (Kling / Seedance via Scenario, or equivalent) from each direction's still — prompt "walk cycle **in place**, looping, side view" — then `ffmpeg -vf fps=12` frame extraction; hand-pick the 4–6 frames hitting the key poses (contact/lift/passing); background-remove (rembg); clean drift in Aseprite (timeline + onion skin + tags), force the loop.
+- *The 3 attack swings*: do NOT trust video models here — author 4–6 frames per swing as **anticipation / smear / impact / follow-through** stills via A3 pose edits (a big painted smear frame both looks hand-drawn and hides AI inconsistency). Match the existing combat choreography: forehand, backhand, 360° spin.
+- *Free fallback*: Meta Animated Drawings (MIT) — annotate each drawn view, retarget BVH walk/idle clips, render transparent GIFs headlessly via its Python API, explode to frames. Good for walk/idle; not for attacks.
+
+**A5. Post-processing every frame (the anti-"pasted-on" pass):** quantize colors to the game palette (nearest-color script); erase ALL baked shadows (the game draws its own blob shadow); normalize ink outline weight (~2 px at authoring scale, sepia not black); defringe/matte alpha edges (no white halos — test on dark background); author at 192×192, downscale 2× to 96×96 with Lanczos.
+
+**A6. Sheet assembly (Aseprite as source of truth).** Per character one PNG: cell **96×96** (2 px inner gutter), **rows = directions in order down/left/right/up** (author 3 views, mirror side at runtime — bake both side rows only if staff-hand matters), columns = frames. States and budgets per direction: idle 4 @ ~5 fps · walk 6 @ ~10 fps · attack1 4 · attack2 4 · attack3 6 (all 12–15 fps, non-loop) · hurt 3 · death 6 @ 8 fps (hold last). Pivot: bottom-center of feet at **(48, 88)**, identical in every frame — feet baseline never moves inside the cell. Slime/watcher need fewer states (no attacks; watcher: idle + spin).
+
+**A7. Licensing/disclosure (non-optional):** generate on a PAID plan (free-tier outputs are usually non-commercial); record which tool produced what; when shipping to Steam/itch, fill the generative-AI disclosure (required on both since 2024; itch delists undisclosed AI assets).
+
+### Part B — Engine integration (implementable now, before any assets exist)
+
+**Map of what exists:** character rendering in `js/game.js` (`drawPlayer`, `drawEntity`, `drawCreature`), procedural sprites in `js/sprites.js`, combat states in `js/combat.js`. Constraints: do NOT change movement, combat logic, or entity AI; the animation layer only *observes* game state. The game must keep working with zero asset files present.
+
+1. **Packaging — no fetch, no server:** each character's assets ship as `assets/<name>.js` defining `GAME_ASSETS.<name> = { frameW, frameH, anchor, anims, png: "data:image/png;base64,..." }`, loaded via plain script tags. Data URIs are same-origin (no CORS, no canvas tainting on `file://`). Load with `new Image() → await img.decode()` under `Promise.allSettled`.
+2. **Animation table + state machine:** per-frame durations in ms (support scalar or array — uneven holds are what make few frames feel like many); advance frames in the fixed-timestep update with a while-loop, never in render; derive the desired animation from game state each tick through a priority filter (`death > hurt > attackN > walk > idle`); non-looping states are uninterruptible except by higher priority; re-setting the same looping state is a no-op.
+3. **Rendering:** translate to interpolated position (integer-rounded) → rotate/flip/squash via the existing transform chain (`scale(facingLeft ? -sx : sx, sy)`) → `drawImage(sheet, col*96, dirRow*96, 96, 96, -48, -88, 96, 96)`. White hit-flash = a pre-baked white-silhouette copy of the whole sheet (source-in fill at load), drawn with alpha over the frame — no per-frame compositing. The game's blob shadow, squash, flash and i-frame flicker apply identically to both render paths.
+4. **Hot-swap fallback:** every character has a `draw` slot initialized to the procedural renderer; when its sheet decodes, the slot flips to the sheet renderer. `?procedural` URL flag forces the old path (A/B comparison + kill switch). A missing/corrupt `assets/*.js` degrades only that character.
+5. **Combat sync:** attack animations map to the existing swing phases — the sheet's `hitFrame` metadata must land inside the strike's active window; if frame counts and COMBAT.SWINGS timings disagree, the state machine stretches frame durations to fit the swing duration (code timing stays authoritative, art follows).
+
+**Acceptance criteria (Part B, testable with a generated placeholder sheet):** game boots and plays identically with zero assets, with all assets, and with one corrupt asset; `?procedural` flips all characters; feet never slide or sink at walk speed changes; hit-flash/squash/knockback visuals identical across both paths; 60 fps; no console errors on `file://`.
+
+**Regression checklist:** all prior suites green; total asset payload target &lt; 4 MB base64; sheet dimensions ≤ 2048 px per side.
