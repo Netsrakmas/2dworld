@@ -141,7 +141,7 @@ function updatePlayerCombat(game, dt) {
     // circle-vs-arc-sector test, dedup via per-swing hit set
     for (const e of game.entities) {
       if (p.attackHit.has(e)) continue;
-      if (e.kind !== 'ogre' && e.kind !== 'slime' && e.kind !== 'watcher') continue;
+      if (!e.hittable) continue;
       if (e.dazedT > 0) continue;
       const dx = e.x - p.x, dy = e.y - p.y;
       const d = Math.hypot(dx, dy);
@@ -205,6 +205,8 @@ function hitEnemy(game, e, finisher) {
   const p = game.player;
   const ang = Math.atan2(e.y - p.y, e.x - p.x);
   const F = PALETTE.forest;
+
+  if (e.kind === 'pot') { smashPot(game, e); return; }   // dungeon pots shatter, no combat feedback stack
 
   if (e.kind === 'watcher') {
     // unkillable, but reactive: spin + first-bonk trinkets

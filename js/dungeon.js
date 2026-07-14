@@ -22,6 +22,16 @@ const DUNGEON = Object.freeze({
   VIGNETTE_ALPHA: 0.42,
   SPAWN_ROOM: '2,3',               // entrance hall
   SPAWN_TILE: [7, 8.5],            // player spawn inside the entrance (tile coords)
+  // interactables (pass 2)
+  PUSH_HOLD: 0.4,                  // sustained push before a block moves (s)
+  PUSH_TWEEN: 0.18,                // one-tile block slide (s), quad ease-out
+  POT_SHARDS: 5,
+  POT_DROP_HEART: 0.3,             // then 0.4 trinket, else nothing
+  POT_DROP_TRINKET: 0.7,
+  CHEST_LID_T: 0.3,                // lid pop (s)
+  CHEST_RISE_T: 0.4,               // item rises 20px over this (s)
+  CHEST_GRANT_T: 0.9,              // total ceremony time before the item is granted
+  KEY_RADIUS: 16,                  // px pickup touch radius
 });
 
 const Dungeon = {
@@ -34,10 +44,19 @@ const Dungeon = {
   slide: null,                     // { t, camFrom, camTo, pFrom, pTo, toRoom, hop }
   fade: null,                      // { t, phase: 'out'|'in', onMid }
   saved: null,                     // stashed overworld state while inside
-  keys: 0, bossKey: false,         // pass 2
+  keys: 0, bossKey: false,
   vignette: null, vigW: 0, vigH: 0,
   leaves: {},                      // baked door-leaf sprites
+  spr: {},                         // baked interactable sprites
+  // session-long flags: chests stay open forever, latched switches stay
+  // latched; smashed pots regrow when the dungeon is re-entered
+  flags: { smashed: new Set(), latched: new Set(), chests: new Set(), keysTaken: new Set() },
 };
+
+// what each chest holds, by room
+const CHEST_CONTENTS = { '1,2': 'key', '0,1': 'bombs', '3,1': 'bosskey' };
+// which rooms' switches drive what: a chest unlock or a door edge
+const SWITCH_WIRES = { '1,2': { chest: true }, '4,2': { door: ['4,1', '4,2'] } };
 
 /* ---------------- authored rooms ----------------
    15 columns x 11 rows. '#' wall, 'T' wall with a torch sconce, '.' floor.
@@ -77,7 +96,7 @@ const DUNGEON_ROOMS = [
     '#.............#',
     '#..##.....##..#',
     '#..#T.....T#..#',
-    '#.............#',
+    '#......k......#',
     '#......o......#',
     '#....o...o....#',
     '#..##.....##..#',
@@ -218,7 +237,7 @@ const DUNGEON_EDGES = [
   ['1,1', '0,1', 'open'],     // snappers -> gift room (Blossom Bombs)
   ['0,1', '0,2', 'open'],     // gift room -> cracked cellar
   ['0,2', '1,2', 'cracked'],  // cellar -> weighted door (the teaching wall)
-  ['4,1', '4,2', 'open'],     // M.'s camp -> switch maze (switch-shut in pass 2)
+  ['4,1', '4,2', 'shut'],     // M.'s camp -> switch maze: opens on the two switches
   ['3,1', '3,2', 'ledge'],    // high shelf -> pebblit den, one-way drop
 ];
 
@@ -280,6 +299,7 @@ function buildDungeon(seedInt) {
   carveDoor(r1, 'S', exitDoor, null);
 
   bakeDoorLeaves(seedInt);
+  bakeDungeonProps(seedInt);
   for (const room of Dungeon.rooms.values()) room.canvas = bakeRoom(room, seedInt);
 
   Dungeon.built = true;
@@ -517,12 +537,421 @@ function dungeonSolidAt(wx, wy) {
   const lx = tx - gx * DUNGEON.ROOM_W, ly = ty - gy * DUNGEON.ROOM_H;
   const idx = ly * DUNGEON.ROOM_W + lx;
   const v = room.tiles[idx];
-  if (v === 0) return false;
+  if (v === 0) return room.dyn ? room.dyn.has(idx) : false;   // pots/blocks/chests
   if (v === 1) return true;
   const door = room.doorAt.get(idx);
   if (!door) return true;
   if (door.type === 'ledge') return false;          // walkable from the shelf side only (other side never carved)
   return door.state !== 'open';
+}
+
+/* ---------------- interactables (pass 2) ---------------- */
+
+function bakeDungeonProps(seedInt) {
+  const DN = PALETTE.dungeon, F = PALETTE.forest;
+  const S = Dungeon.spr;
+
+  S.pot = [];
+  for (let i = 0; i < 2; i++) {
+    const R = mulberry32(seedInt ^ (0x907 + i));
+    S.pot.push(sprite(34, 38, 17, 26, (ctx) => {
+      blobShadow(ctx, 17, 33, 11, 3.5);
+      Sketch.blob(ctx, [
+        [7, 30], [4, 18], [9, 8], [17, 6], [25, 8], [30, 18], [27, 30], [17, 33],
+      ], R, { fill: F.stone, stroke: F.ink, lineWidth: 2.2, rough: 1.6 });
+      ctx.fillStyle = shade(PALETTE.forest.stone, 0.85);
+      ctx.beginPath(); ctx.roundRect(9, 6, 16, 5, 2.5); ctx.fill();
+      ctx.strokeStyle = F.ink; ctx.lineWidth = 2; ctx.stroke();
+      ctx.strokeStyle = withAlpha(F.ink, 0.5); ctx.lineWidth = 1.6;
+      Sketch.line(ctx, 8, 22, 26, 22, R, { rough: 1.4, passes: 1 });
+    }));
+  }
+
+  {
+    const R = mulberry32(seedInt ^ 0xB10C);
+    S.block = sprite(TILE, TILE + 8, TILE / 2, 30, (ctx) => {
+      // mossy root-bound cube: light top, dark base, ink outline
+      ctx.fillStyle = F.stone;
+      ctx.strokeStyle = F.ink; ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.roundRect(3, 10, TILE - 6, TILE - 8, 5); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = shade(PALETTE.forest.stone, 1.14);
+      ctx.beginPath(); ctx.roundRect(3, 10, TILE - 6, 10, 5); ctx.fill();
+      ctx.fillStyle = withAlpha(PALETTE.dungeon.dark, 0.25);
+      ctx.fillRect(5, TILE - 4, TILE - 10, 5);
+      ctx.strokeStyle = withAlpha(F.ink, 0.6); ctx.lineWidth = 1.6;
+      Sketch.line(ctx, 8, 20, 16, 26, R, { rough: 1.4, passes: 1 });
+      Sketch.line(ctx, TILE - 14, 18, TILE - 8, 26, R, { rough: 1.4, passes: 1 });
+      ctx.fillStyle = withAlpha(PALETTE.forest.canopyMid, 0.7);
+      ctx.beginPath(); ctx.arc(10, 13, 3, 0, Math.PI * 2); ctx.arc(26, 12, 2.4, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  for (const pressed of [0, 1]) {
+    const R = mulberry32(seedInt ^ (0x51C + pressed));
+    S['switch' + pressed] = sprite(TILE, TILE, TILE / 2, TILE / 2, (ctx) => {
+      ctx.fillStyle = withAlpha(PALETTE.dungeon.dark, 0.3);
+      ctx.beginPath(); ctx.roundRect(7, 9, TILE - 14, TILE - 16, 6); ctx.fill();
+      ctx.fillStyle = pressed ? shade(PALETTE.dungeon.floorSpeckle, 0.8) : PALETTE.dungeon.floorSpeckle;
+      ctx.strokeStyle = F.ink; ctx.lineWidth = 2;
+      const lift = pressed ? 0 : 3;
+      ctx.beginPath(); ctx.roundRect(9, 11 - lift, TILE - 18, TILE - 20, 5); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = withAlpha(F.ink, 0.55);
+      ctx.beginPath(); ctx.arc(TILE / 2, TILE / 2 - 2 - lift, 3, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  for (const open of [0, 1]) {
+    const R = mulberry32(seedInt ^ (0xCE57 + open));
+    S['chest' + open] = sprite(44, 42, 22, 30, (ctx) => {
+      blobShadow(ctx, 22, 37, 15, 4);
+      if (open) {
+        ctx.fillStyle = PALETTE.dungeon.dark;
+        ctx.beginPath(); ctx.roundRect(6, 16, 32, 18, 4); ctx.fill();
+        ctx.strokeStyle = F.ink; ctx.lineWidth = 2.2; ctx.stroke();
+        ctx.fillStyle = F.woodLight;                    // lid tipped back
+        ctx.beginPath(); ctx.roundRect(4, 4, 36, 10, 4); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = PALETTE.dungeon.iron;
+        ctx.fillRect(19, 4, 6, 10); ctx.strokeRect(19, 4, 6, 10);
+      } else {
+        ctx.fillStyle = F.woodLight;
+        ctx.strokeStyle = F.ink; ctx.lineWidth = 2.2;
+        ctx.beginPath(); ctx.roundRect(6, 12, 32, 22, 5); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = F.trunk;
+        ctx.beginPath(); ctx.roundRect(6, 12, 32, 9, 5); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = PALETTE.dungeon.iron;
+        ctx.fillRect(19, 12, 6, 22); ctx.strokeRect(19, 12, 6, 22);
+        ctx.fillStyle = PALETTE.dungeon.keyGold;
+        ctx.beginPath(); ctx.arc(22, 24, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+    });
+  }
+
+  for (const big of [0, 1]) {
+    const R = mulberry32(seedInt ^ (0x4E1 + big));
+    const s = big ? 1.4 : 1;
+    S[big ? 'bosskey' : 'key'] = sprite(26 * s, 30 * s, 13 * s, 26 * s, (ctx) => {
+      ctx.save();
+      ctx.scale(s, s);
+      blobShadow(ctx, 13, 26, 8, 2.6);
+      ctx.fillStyle = PALETTE.dungeon.keyGold;
+      ctx.strokeStyle = F.ink; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(13, 8, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = F.cream;
+      ctx.beginPath(); ctx.arc(13, 8, 2.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = PALETTE.dungeon.keyGold;
+      ctx.beginPath(); ctx.roundRect(11.4, 12, 3.2, 12, 1.5); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.roundRect(14, 19, 5, 2.6, 1); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.roundRect(14, 23, 4, 2.6, 1); ctx.fill(); ctx.stroke();
+      if (big) {
+        ctx.fillStyle = PALETTE.forest.pond;
+        starPath(ctx, 13, 8, 4.4, 4); ctx.fill();
+      }
+      ctx.restore();
+    });
+  }
+
+  {
+    // a blossom bomb bud (chest ceremony + pass 4 item)
+    const R = mulberry32(seedInt ^ 0xB0B);
+    S.bloom = sprite(26, 26, 13, 22, (ctx) => {
+      const D = PALETTE.desert;
+      blobShadow(ctx, 13, 22, 8, 2.6);
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
+        ctx.fillStyle = D.blossom;
+        ctx.strokeStyle = F.ink; ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.ellipse(13 + Math.cos(a) * 6, 12 + Math.sin(a) * 6, 5, 4, a, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+      }
+      ctx.fillStyle = D.blossomYellow;
+      ctx.beginPath(); ctx.arc(13, 12, 3.6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    });
+  }
+}
+
+// spawn the current room's live objects from its spawn specs + session flags
+function activateRoom(game, room) {
+  // despawn everything room-scoped (dungeon entities never outlive their room)
+  game.entities.length = 0;
+  room.dyn = new Map();
+  const W = DUNGEON.ROOM_W;
+  const addDyn = (lx, ly, e) => room.dyn.set(ly * W + lx, e);
+  const solved = roomSwitchesLatched(room);
+  let potIdx = 0;
+  for (const sp of room.spawns) {
+    const wx = room.ox + (sp.lx + 0.5) * TILE;
+    const wy = room.oy + (sp.ly + 0.5) * TILE;
+    if (sp.ch === 'P') {
+      const id = room.key + ':pot' + potIdx++;
+      if (Dungeon.flags.smashed.has(id)) continue;
+      const r = rng2(room.gx * W + sp.lx, room.gy * DUNGEON.ROOM_H + sp.ly, World.seedInt ^ 0x907);
+      const e = { kind: 'pot', id, x: wx, y: wy, px: wx, py: wy, lx: sp.lx, ly: sp.ly,
+                  radius: 14, hittable: true, variant: (r() * 2) | 0, drop: r() };
+      game.entities.push(e);
+      addDyn(sp.lx, sp.ly, e);
+    } else if (sp.ch === 'B') {
+      // blocks reset to their authored tile until the room's puzzle is latched
+      const e = { kind: 'dblock', x: wx, y: wy, px: wx, py: wy, lx: sp.lx, ly: sp.ly,
+                  pushT: 0, slide: null, room };
+      game.entities.push(e);
+      addDyn(sp.lx, sp.ly, e);
+    } else if (sp.ch === 's') {
+      const id = room.key + ':sw' + sp.lx + ',' + sp.ly;
+      const e = { kind: 'dswitch', id, x: wx, y: wy, px: wx, py: wy, lx: sp.lx, ly: sp.ly,
+                  latched: Dungeon.flags.latched.has(id), pressed: false };
+      game.entities.push(e);
+    } else if (sp.ch === 'C') {
+      const id = room.key + ':chest';
+      const contents = CHEST_CONTENTS[room.key] || 'trinkets';
+      const opened = Dungeon.flags.chests.has(id);
+      const wired = SWITCH_WIRES[room.key] && SWITCH_WIRES[room.key].chest;
+      const e = { kind: 'dchest', id, contents, x: wx, y: wy, px: wx, py: wy, lx: sp.lx, ly: sp.ly,
+                  state: opened ? 'open' : (wired && !solved) ? 'locked' : 'closed',
+                  openT: 0, sparkleT: Math.random() * 2 };
+      e.interact = { label: 'open', action: () => openChest(game, e) };
+      game.entities.push(e);
+      addDyn(sp.lx, sp.ly, e);
+    } else if (sp.ch === 'k') {
+      const id = room.key + ':key';
+      if (Dungeon.flags.keysTaken.has(id)) continue;
+      game.entities.push({ kind: 'dkey', id, x: wx, y: wy, px: wx, py: wy, bobT: Math.random() * 6 });
+    }
+    // enemy chars (o m x X) spawn in pass 3 / 5
+  }
+}
+
+function roomSwitchesLatched(room) {
+  const W = DUNGEON.ROOM_W;
+  let all = true, any = false;
+  for (const sp of room.spawns) {
+    if (sp.ch !== 's') continue;
+    any = true;
+    if (!Dungeon.flags.latched.has(room.key + ':sw' + sp.lx + ',' + sp.ly)) all = false;
+  }
+  return any && all;
+}
+
+function smashPot(game, e) {
+  Dungeon.flags.smashed.add(e.id);
+  if (Dungeon.cur && Dungeon.cur.dyn) Dungeon.cur.dyn.delete(e.ly * DUNGEON.ROOM_W + e.lx);
+  game.freeze(COMBAT.HITSTOP);
+  game.burst(e.x, e.y - 10, DUNGEON.POT_SHARDS, PALETTE.forest.stone);
+  game.burst(e.x, e.y - 10, 4, PALETTE.forest.cream);
+  if (e.drop < DUNGEON.POT_DROP_HEART) spawnPickup(game, e.x, e.y, 'heart');
+  else if (e.drop < DUNGEON.POT_DROP_TRINKET) spawnPickup(game, e.x, e.y, 'trinket');
+  game.removeEntity(e);
+}
+
+function openChest(game, e) {
+  if (e.state === 'locked') {
+    game.showDialog('The lid is held fast by roots. Something in this room must loosen them.');
+    return;
+  }
+  if (e.state !== 'closed') return;
+  e.state = 'opening';
+  e.openT = 0;
+  game.burst(e.x, e.y - 14, 6, PALETTE.fx.trinket);
+}
+
+function grantChest(game, e) {
+  Dungeon.flags.chests.add(e.id);
+  if (e.contents === 'key') {
+    Dungeon.keys++;
+    game.floatText(e.x, e.y - 40, '+1 key');
+    game.showDialog('A small golden key! It smells faintly of moss.');
+  } else if (e.contents === 'bosskey') {
+    Dungeon.bossKey = true;
+    game.shake(0.15, 0.01);
+    game.showDialog('The <b>Big Key</b>! Far below, something enormous sighs in its sleep.');
+  } else if (e.contents === 'bombs') {
+    game.bombs = { count: 3, cap: 3, regrowT: 0 };
+    game.showDialog('<b>Blossom Bombs!</b> Cactus buds that pop into a cheerful petal-BOOM.<span class="hint">They regrow on their own. Cracked walls beware.</span>');
+  } else {
+    for (let i = 0; i < 3; i++) spawnPickup(game, e.x, e.y, 'trinket');
+  }
+}
+
+function updateDChest(e, game, dt) {
+  e.sparkleT -= dt;
+  if (e.sparkleT <= 0 && e.state !== 'open' && e.state !== 'opening') {
+    e.sparkleT = 1.6 + Math.random();
+    emitParticle(game.particles, e.x + (Math.random() - 0.5) * 24, e.y - 18 - Math.random() * 8,
+      0, -8, 0.5, 1.6, PALETTE.fx.trinket);
+  }
+  if (e.state === 'opening') {
+    e.openT += dt;
+    if (e.openT > DUNGEON.CHEST_LID_T && !e.popped) {
+      e.popped = true;
+      game.burst(e.x, e.y - 16, 8, PALETTE.fx.flash);
+    }
+    if (e.openT > DUNGEON.CHEST_GRANT_T) {
+      e.state = 'open';
+      grantChest(game, e);
+    }
+  }
+}
+
+function updateDKey(e, game, dt) {
+  e.bobT += dt;
+  const p = game.player;
+  if (dist2(p.x, p.y, e.x, e.y) < DUNGEON.KEY_RADIUS * DUNGEON.KEY_RADIUS * 4) {
+    Dungeon.flags.keysTaken.add(e.id);
+    Dungeon.keys++;
+    game.burst(e.x, e.y - 8, 8, PALETTE.dungeon.keyGold);
+    game.floatText(e.x, e.y - 28, '+1 key');
+    game.removeEntity(e);
+  }
+}
+
+function updateDSwitch(e, game, dt) {
+  const p = game.player;
+  const room = Dungeon.cur;
+  const idx = e.ly * DUNGEON.ROOM_W + e.lx;
+  const occ = room.dyn && room.dyn.get(idx);
+  const playerOn = Math.floor(p.x / TILE) === room.gx * DUNGEON.ROOM_W + e.lx &&
+                   Math.floor(p.y / TILE) === room.gy * DUNGEON.ROOM_H + e.ly;
+  const wasActive = e.pressed || e.latched;
+  e.pressed = playerOn || !!occ;
+  // a block that has come to rest on the plate latches it for good
+  if (!e.latched && occ && occ.kind === 'dblock' && !occ.slide) {
+    e.latched = true;
+    occ.locked = true;              // the roots grip the block for good
+    Dungeon.flags.latched.add(e.id);
+    game.burst(e.x, e.y - 4, 8, PALETTE.dungeon.floorSpeckle);
+    game.floatText(e.x, e.y - 24, 'chunk!');
+  }
+  if (!wasActive && (e.pressed || e.latched)) game.shake(0.05, 0.004);
+}
+
+// sustained-push block movement, grid-snapped with a tweened slide
+function updateDBlock(e, game, dt) {
+  const room = Dungeon.cur;
+  const W = DUNGEON.ROOM_W, H = DUNGEON.ROOM_H;
+  if (e.slide) {
+    const s = e.slide;
+    s.t += dt / DUNGEON.PUSH_TWEEN;
+    const u = clamp(s.t, 0, 1);
+    const k = 1 - (1 - u) * (1 - u);
+    e.x = lerp(s.fx, s.tx, k);
+    e.y = lerp(s.fy, s.ty, k);
+    if (u >= 1) {
+      room.dyn.delete(s.fromIdx);
+      e.lx = s.toLx; e.ly = s.toLy;
+      e.slide = null;
+      game.burst(e.x, e.y + 6, 4, PALETTE.dungeon.floorSpeckle);
+    }
+    return;
+  }
+  if (e.locked) return;             // settled onto a switch — held fast
+  const p = game.player;
+  // is the player walking into this block?
+  const { ix, iy } = game.readInput();
+  let dx = 0, dy = 0;
+  if (Math.abs(ix) > Math.abs(iy) && Math.abs(ix) > 0.3) dx = Math.sign(ix);
+  else if (Math.abs(iy) > 0.3) dy = Math.sign(iy);
+  const facingTileX = Math.floor((p.x + dx * (p.radius + 8)) / TILE);
+  const facingTileY = Math.floor((p.y + dy * (p.radius + 8)) / TILE);
+  const bTx = room.gx * W + e.lx, bTy = room.gy * H + e.ly;
+  const pushing = (dx || dy) && facingTileX === bTx && facingTileY === bTy &&
+    Math.abs(p.x - e.x) < TILE && Math.abs(p.y - e.y) < TILE;
+  if (!pushing) { e.pushT = Math.max(0, e.pushT - dt * 2); return; }
+  e.pushT += dt;
+  if (e.pushT < DUNGEON.PUSH_HOLD) return;
+  const nlx = e.lx + dx, nly = e.ly + dy;
+  if (nlx < 1 || nly < 1 || nlx >= W - 1 || nly >= H - 1) { e.pushT = 0; return; }
+  const nIdx = nly * W + nlx;
+  if (room.tiles[nIdx] !== 0 || room.dyn.has(nIdx)) { e.pushT = 0; return; }
+  e.pushT = 0;
+  const fromIdx = e.ly * W + e.lx;
+  room.dyn.set(nIdx, e);                     // destination becomes solid immediately
+  e.slide = {
+    t: 0, fromIdx, toLx: nlx, toLy: nly,
+    fx: e.x, fy: e.y,
+    tx: room.ox + (nlx + 0.5) * TILE,
+    ty: room.oy + (nly + 0.5) * TILE,
+  };
+}
+
+// switch wiring: one mutation point, checked once per tick for the current room
+function checkRoomWiring(game) {
+  const room = Dungeon.cur;
+  const wire = SWITCH_WIRES[room.key];
+  if (!wire) return;
+  let all = true, any = false;
+  for (const e of game.entities) {
+    if (e.kind !== 'dswitch') continue;
+    any = true;
+    if (!(e.pressed || e.latched)) all = false;
+  }
+  if (!any || !all) return;
+  if (wire.chest) {
+    for (const e of game.entities) {
+      if (e.kind === 'dchest' && e.state === 'locked') {
+        e.state = 'closed';
+        game.burst(e.x, e.y - 14, 10, PALETTE.fx.trinket);
+        game.floatText(e.x, e.y - 36, '*click*');
+        game.shake(0.08, 0.006);
+      }
+    }
+  } else if (wire.door) {
+    const door = Dungeon.doors.get(edgeKey(wire.door[0], wire.door[1]));
+    if (door && door.state === 'closed' && !door.opening) {
+      door.opening = true;
+      game.shake(0.08, 0.006);
+      game.floatText(game.player.x, game.player.y - 44, 'something opened...');
+    }
+  }
+}
+
+// pushing against a locked/boss door spends the matching key
+function checkDoorUnlock(game, dt) {
+  const p = game.player;
+  const room = Dungeon.cur;
+  const DIRV = [[0, 1], [0, -1], [-1, 0], [1, 0]];   // down, up, left, right
+  const [dx, dy] = DIRV[p.dir];
+  if (!p.moving) return;
+  const tx = Math.floor((p.x + dx * (p.radius + 10)) / TILE);
+  const ty = Math.floor((p.y + dy * (p.radius + 10)) / TILE);
+  if (Math.floor(tx / DUNGEON.ROOM_W) !== room.gx || Math.floor(ty / DUNGEON.ROOM_H) !== room.gy) return;
+  const idx = (ty - room.gy * DUNGEON.ROOM_H) * DUNGEON.ROOM_W + (tx - room.gx * DUNGEON.ROOM_W);
+  const door = room.doorAt.get(idx);
+  if (!door || door.state !== 'closed' || door.opening || door.shakeT > 0) return;
+  if (door.type === 'locked') {
+    if (Dungeon.keys > 0) {
+      Dungeon.keys--;
+      door.shakeT = DUNGEON.LOCK_SHAKE_T;
+      game.floatText((tx + 0.5) * TILE, (ty + 0.5) * TILE - 20, '*click*');
+    } else if (!door.hinted || door.hinted < game.time - 4) {
+      door.hinted = game.time;
+      game.showDialog('Locked. The keyhole is shaped like a little moss-flower.');
+    }
+  } else if (door.type === 'boss') {
+    if (Dungeon.bossKey) {
+      door.shakeT = DUNGEON.LOCK_SHAKE_T;
+      game.shake(0.1, 0.008);
+    } else if (!door.hinted || door.hinted < game.time - 4) {
+      door.hinted = game.time;
+      game.showDialog('An enormous ornate door. It wants an enormous ornate key.');
+    }
+  }
+}
+
+// door animation bookkeeping (shake -> leaf slides into the wall -> open)
+function updateDoors(game, dt) {
+  for (const door of Dungeon.doors.values()) {
+    if (door.shakeT > 0) {
+      door.shakeT -= dt;
+      if (door.shakeT <= 0) door.opening = true;
+    } else if (door.opening && door.state === 'closed') {
+      door.anim += dt / DUNGEON.DOOR_OPEN_T;
+      if (door.anim >= 1) {
+        door.anim = 1;
+        door.state = 'open';
+        door.opening = false;
+      }
+    }
+  }
 }
 
 /* ---------------- enter / exit / respawn ---------------- */
@@ -544,6 +973,7 @@ function placePlayerInDungeon(game) {
   p.dir = 1; // facing up, into the dungeon
   Dungeon.cur = Dungeon.rooms.get(DUNGEON.SPAWN_ROOM);
   Dungeon.visited.add(DUNGEON.SPAWN_ROOM);
+  activateRoom(game, Dungeon.cur);
   const cam = dungeonCamTarget(Dungeon.cur, p);
   game.cam.x = game.cam.px = cam.x;
   game.cam.y = game.cam.py = cam.y;
@@ -558,6 +988,7 @@ function enterDungeon(game) {
       Dungeon.saved = { x: p.x, y: p.y, entities: game.entities };
       game.entities = [];
       Dungeon.active = true;
+      Dungeon.flags.smashed.clear();   // pots regrow between visits
       placePlayerInDungeon(game);
       game.showDialog('The Hollow Stump. Somewhere below, a quill is still scratching.');
     },
@@ -671,6 +1102,7 @@ function updateDungeonMode(game, dt) {
     if (u >= 1) {
       Dungeon.cur = s.toRoom;
       Dungeon.visited.add(s.toRoom.key);
+      activateRoom(game, s.toRoom);
       if (s.hop) {
         game.burst(p.x, p.y, 8, PALETTE.dungeon.floorSpeckle);
         game.shake(0.1, 0.008);
@@ -752,11 +1184,19 @@ function updateDungeonMode(game, dt) {
   game.cam.y += (cam.y - game.cam.y) * DUNGEON.CAM_LERP;
   if (game.shakeT > 0) game.shakeT -= dt;
 
-  // room entities (pickups now; enemies in pass 3)
+  checkDoorUnlock(game, dt);
+  updateDoors(game, dt);
+
+  // room entities
   for (const e of game.entities) {
     e.px = e.x; e.py = e.y;
     if (e.kind === 'pickup') updatePickup(e, game, dt);
+    else if (e.kind === 'dblock') updateDBlock(e, game, dt);
+    else if (e.kind === 'dchest') updateDChest(e, game, dt);
+    else if (e.kind === 'dkey') updateDKey(e, game, dt);
+    else if (e.kind === 'dswitch') updateDSwitch(e, game, dt);
   }
+  checkRoomWiring(game);
 
   updateDungeonAmbient(game, dt);
 }
@@ -815,7 +1255,8 @@ function renderDungeon(ctx, game, alpha, vw, vh) {
       const door = d.door;
       if (door.type === 'open' || door.type === 'exit' || door.type === 'cracked' || door.type === 'ledge') continue;
       if (door.state === 'open' && door.anim >= 1) continue;
-      const leaf = Dungeon.leaves[door.type === 'boss' ? 'boss' : door.type === 'shutter' ? 'shutter' : 'locked'];
+      const leaf = Dungeon.leaves[door.type === 'boss' ? 'boss' :
+        (door.type === 'shutter' || door.type === 'shut') ? 'shutter' : 'locked'];
       const cx = (d.tx + 0.5) * TILE - ox;
       const cy = (d.ty + 0.5) * TILE - oy;
       const slide = door.anim * TILE;   // leaf retreats into the wall as it opens
@@ -838,7 +1279,7 @@ function renderDungeon(ctx, game, alpha, vw, vh) {
   const boil = ((game.time * 8) | 0) % 2;
   for (const d of drawables) {
     if (d === p) game.draw.player(alpha, ox, oy, boil);
-    else game.draw.entity(d, alpha, ox, oy, boil);
+    else if (!drawDungeonEntity(ctx, d, alpha, ox, oy)) game.draw.entity(d, alpha, ox, oy, boil);
   }
 
   game.draw.rings(ox, oy);
@@ -906,6 +1347,61 @@ function renderDungeon(ctx, game, alpha, vw, vh) {
   }
 }
 
+// draws pass-2+ dungeon kinds; returns false so unknown kinds fall through
+// to the shared game.draw.entity path (pickups, creatures)
+function drawDungeonEntity(c, e, alpha, ox, oy) {
+  const S = Dungeon.spr;
+  const x = Math.round(lerp(e.px, e.x, alpha) - ox);
+  const y = Math.round(lerp(e.py, e.y, alpha) - oy);
+  if (e.kind === 'pot') {
+    const spr = S.pot[e.variant];
+    c.drawImage(spr.c, x - spr.ax, y - spr.ay);
+    return true;
+  }
+  if (e.kind === 'dblock') {
+    c.drawImage(S.block.c, x - S.block.ax, y - S.block.ay);
+    return true;
+  }
+  if (e.kind === 'dswitch') {
+    const spr = S['switch' + ((e.pressed || e.latched) ? 1 : 0)];
+    c.drawImage(spr.c, x - spr.ax, y - spr.ay);
+    return true;
+  }
+  if (e.kind === 'dchest') {
+    let spr = S.chest0;
+    let pop = 1;
+    if (e.state === 'opening') {
+      if (e.openT > DUNGEON.CHEST_LID_T) spr = S.chest1;
+      pop = 1 + 0.18 * (1 - Math.abs(1 - 2 * clamp(e.openT / DUNGEON.CHEST_LID_T, 0, 1)));
+    } else if (e.state === 'open') spr = S.chest1;
+    c.save();
+    c.translate(x, y);
+    c.scale(pop, 2 - pop);
+    c.drawImage(spr.c, -spr.ax, -spr.ay);
+    c.restore();
+    if (e.state === 'opening' && e.openT > DUNGEON.CHEST_LID_T) {
+      // the treasure rises from the chest with a sparkle
+      const u = clamp((e.openT - DUNGEON.CHEST_LID_T) / DUNGEON.CHEST_RISE_T, 0, 1);
+      const rise = 20 * (1 - (1 - u) * (1 - u));
+      const item = e.contents === 'key' ? S.key : e.contents === 'bosskey' ? S.bosskey :
+        e.contents === 'bombs' ? S.bloom : SPRITES.trinket;
+      c.drawImage(item.c, x - item.ax, y - 26 - rise - item.ay + item.c.height * 0.4);
+      if (((e.openT * 20) | 0) % 4 === 0) {
+        c.fillStyle = PALETTE.fx.flash;
+        starPath(c, x + Math.sin(e.openT * 9) * 12, y - 30 - rise, 4, 4);
+        c.fill();
+      }
+    }
+    return true;
+  }
+  if (e.kind === 'dkey') {
+    const bob = Math.sin(e.bobT * 2.6) * 3;
+    c.drawImage(S.key.c, x - S.key.ax, y - S.key.ay + bob);
+    return true;
+  }
+  return false;
+}
+
 // the parchment room map (replaces the minimap while inside)
 function drawRoomMapHud(ctx, game, vw) {
   const F = PALETTE.forest, DN = PALETTE.dungeon;
@@ -930,6 +1426,15 @@ function drawRoomMapHud(ctx, game, vw) {
       ctx.beginPath(); ctx.arc(x + cell / 2, y + cell - 5, 2, 0, Math.PI * 2); ctx.fill();
     }
   }
+  // key inventory under the map
+  const S = Dungeon.spr;
+  let kx = mx + 8;
+  const ky = my + mh + 6;
+  for (let i = 0; i < Dungeon.keys; i++) {
+    ctx.drawImage(S.key.c, kx, ky, S.key.c.width * 0.8, S.key.c.height * 0.8);
+    kx += 18;
+  }
+  if (Dungeon.bossKey) ctx.drawImage(S.bosskey.c, kx + 2, ky - 3);
 }
 
 // enter/exit fade overlay — drawn last from game.js in BOTH modes

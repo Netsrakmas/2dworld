@@ -164,6 +164,7 @@
   function tryInteract() {
     const e = nearestInteractable();
     if (!e) return;
+    if (e.interact.action) { e.interact.action(e); return; }
     showDialog(e.interact.text);
     if (e.kind === 'slime') {
       e.hopDur = 0.3; e.hopT = 2; e.hopDX = 0; e.hopDY = 0;

@@ -47,6 +47,7 @@ function spawnEntity(spec, chunk) {
   e.kbx = 0; e.kby = 0;
   switch (spec.kind) {
     case 'ogre':
+      e.hittable = true;
       e.homeX = e.x; e.homeY = e.y;
       e.state = 'patrol';
       e.targetX = e.x; e.targetY = e.y;
@@ -61,6 +62,7 @@ function spawnEntity(spec, chunk) {
       e.alertT = 0;
       break;
     case 'slime':
+      e.hittable = true;
       e.homeX = e.x; e.homeY = e.y;
       e.hopT = Math.random() * 2;
       e.hopDX = 0; e.hopDY = 0;
@@ -70,6 +72,7 @@ function spawnEntity(spec, chunk) {
       e.interact = { text: 'You poke the slime. It wobbles approvingly.', label: 'poke' };
       break;
     case 'watcher':
+      e.hittable = true;
       e.radius = 12;
       e.lookX = 0; e.lookY = 1;
       e.spinT = 0; e.bonked = false;
