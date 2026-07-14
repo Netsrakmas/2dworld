@@ -410,6 +410,9 @@
       }
     }
 
+    drawGodRays(ctx, game, ox, oy, vw, vh);
+    drawWaterLife(ctx, game, ox, oy, vw, vh);
+
     // gather visible drawables, y-sorted (props + entities + player)
     const drawables = [];
     const margin = 160;
@@ -466,6 +469,8 @@
     }
 
     drawAtmosClouds(ctx, game, ox, oy, vw, vh);
+    drawDrifters(ctx, game, ox, oy);
+    drawParallax(ctx, game, camX, camY, vw, vh);
 
     drawParticles(ox, oy);
     drawRings(ox, oy);
