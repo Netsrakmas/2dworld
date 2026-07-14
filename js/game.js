@@ -83,6 +83,7 @@
   worldInit(seedInt);
   buildSprites(seedInt);
   buildDungeon(seedInt);
+  buildAtmos(seedInt);
   hudSeed.innerHTML = `<small>seed</small> ${seedStr.replace(/[<>&]/g, '')}`;
 
   game.bouldersOpened = new Set();
@@ -273,6 +274,7 @@
     game.cam.x += (p.x - game.cam.x) * 0.08;
     game.cam.y += (p.y - game.cam.y) * 0.08;
     if (game.shakeT > 0) game.shakeT -= dt;
+    updateAtmos(game, dt);
 
     // creatures near the player only
     const activeR2 = (Math.max(innerWidth, innerHeight) * 0.9) ** 2;
@@ -435,18 +437,21 @@
     for (const d of drawables) {
       if (d === p) { drawPlayer(alpha, ox, oy, boil); continue; }
       if (d.kind) { drawEntity(d, alpha, ox, oy, boil); continue; }
-      // static prop, possibly swaying
+      // static prop, swaying to the one global wind (gust fronts travel)
       const px = d.x - ox, py = d.y - oy;
       if (d.sway) {
         ctx.save();
         ctx.translate(px, py);
-        ctx.rotate(Math.sin(game.time * 1.3 + d.phase) * 0.02);
+        ctx.rotate(windAt(d.x, d.y, game.time) * ATMOS.SWAY_PROP +
+                   Math.sin(game.time * 1.3 + d.phase) * 0.008);
         ctx.drawImage(d.spr.c, -d.spr.ax, -d.spr.ay);
         ctx.restore();
       } else {
         ctx.drawImage(d.spr.c, Math.round(px - d.spr.ax), Math.round(py - d.spr.ay));
       }
     }
+
+    drawAtmosClouds(ctx, game, ox, oy, vw, vh);
 
     drawParticles(ox, oy);
     drawRings(ox, oy);
