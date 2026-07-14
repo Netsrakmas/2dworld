@@ -314,3 +314,100 @@ Goal: replace the procedurally drawn characters (player, ogre, slime, watcher) w
 **Acceptance criteria (Part B, testable with a generated placeholder sheet):** game boots and plays identically with zero assets, with all assets, and with one corrupt asset; `?procedural` flips all characters; feet never slide or sink at walk speed changes; hit-flash/squash/knockback visuals identical across both paths; 60 fps; no console errors on `file://`.
 
 **Regression checklist:** all prior suites green; total asset payload target &lt; 4 MB base64; sheet dimensions ≤ 2048 px per side.
+
+---
+
+## THE ZELDA UPDATE (feature-addition prompt — the game becomes a complete Zelda-like)
+
+You are adding the structural half of a GBA-era Zelda (The Minish Cap / A Link to the Past / Link's Awakening) to Two Worlds: **one authored dungeon with lock-and-key progression, a dungeon item, a 3-cycle boss, a heart container, overworld gating, and a real ending.** The combat half already exists (hearts, i-frames, knockback, 3-hit combo, telegraphed enemies) — do not rebuild it. This is a feature addition in five passes; complete one pass, verify, then continue.
+
+**Map of what exists:** fixed-timestep loop, input, camera, rendering and HUD in `js/game.js`; overworld chunks/collision (`isSolidAt`) in `js/world.js`; swing state machine + all combat tunables in `js/combat.js` (`COMBAT`, frozen); creatures in `js/entities.js`; pre-rendered sprites in `js/sprites.js`; every color in `js/palette.js`. Integration constraints:
+
+- The dungeon is a **separate game mode**, not chunks: `game.mode = 'overworld' | 'dungeon'` plus transition states. New logic lives in new files (`js/dungeon.js` for rooms/doors/mode, plus sprite additions in `js/sprites.js`). Do NOT modify overworld world-generation, chunk baking, creature AI, or the swing state machine.
+- The ONLY permitted edits to existing logic files, each a one-line seam: (1) movement/knockback solidity routes through a swappable `game.solidAt(x,y)` (overworld: the existing `isSolidAt`; dungeon: room-tile lookup); (2) the swing hit-loop tests `e.hittable` instead of a hardcoded kind list (set `hittable = true` on ogre/slime/watcher at spawn); (3) player heal/HUD read `p.maxHp` (init `COMBAT.MAX_HP`) instead of the constant, so heart containers can raise it; (4) `update()`/`render()` branch to the dungeon path when `game.mode !== 'overworld'`; (5) input gains one item button. Regression: with the dungeon never entered, the overworld must play byte-identically.
+- Every new tunable lives in ONE frozen `DUNGEON` constants block in `js/dungeon.js`. Zero magic numbers in logic. New colors only in `PALETTE.dungeon`.
+- The dungeon is **hand-authored, same for every seed** (research consensus: Zelda value is authored, placed content — never procgen rooms). Room layouts are ASCII string maps, 15×11 chars, one char per tile: `#` wall, `.` floor, `T` torch-wall, `P` pot, `B` push block, `s` floor switch, `k` small-key spawn, `C` chest, `c` cracked wall, `~` void/pit rim decor, letters for enemy spawns (`o` pebblit, `m` gloomwing, `x` snapper), `@` player-entry fallback. Doors are declared per-room (side + type), not in the ASCII.
+
+**Tone rule:** the dungeon is *The Hollow Stump* — the inside of a colossal ancient tree stump, drawn in the storybook ink treatment on dusk-darkened parchment. Cozy-spooky, never horror: torchlight, root-woven walls, sleepy moths. No blood, no bones of anything recent, no pure black — the darkest value is warm `PALETTE.dungeon.dark`. Defeat anywhere in the dungeon = the usual soft cream fade, wake at the dungeon entrance room with full hearts and everything kept.
+
+### Architecture (pass 1 — the shell)
+
+- **Rooms:** 15×11 tiles of the existing `TILE` (40 px) = 600×440 px, on a small room grid (max 5×4). Camera is **room-locked**: room centered in the viewport; if the viewport is smaller than the room (phones), clamp-follow the player within room bounds. Solid = wall chars + shut doors + blocks + pots.
+- **Screen-slide transition** (the genre's load-bearing camera move): walking through an open door freezes all entities, then slides the camera from old room to new over **480 ms, quadratic ease-out**, drawing BOTH rooms translated during the slide; the player auto-walks **1.2 tiles** through the doorway across the slide, then control returns. New room's enemies spawn at slide end. Never mid-slide input, never a visible seam.
+- **Doors**, one object type, center of each wall side: `open` (archway), `locked` (padlock leaf, consumes a small key: lock shakes 400 ms, then leaf slides into the wall over 250 ms ease-out), `boss` (big ornate leaf, needs the boss key), `shutter` (slams shut 150 ms after you enter a combat room, reopens on clear), `cracked` (item-gated). Doors are the single mutation point: `setOpen(reason)`.
+- **Enter/exit the dungeon:** a Great Stump landmark placed deterministically in the forest ≥30 tiles from spawn (searched outward from spawn along the forest direction at bake time; drawn like a 3×3-tile scalloped stump with a dark doorway and two torch sconces; shown on the minimap like letters are). Walking into the doorway: 350 ms fade to `dungeon.dark`, swap mode, 350 ms fade in. Exiting likewise. Dungeon state (opened doors, taken chests/keys, boss defeated) persists in `game.dungeonState` for the whole session.
+- **Dungeon HUD:** existing hearts + trinkets stay; add small-key count (little gold keys), boss-key icon when held, blossom-bomb count, and a **room map** replacing the minimap: visited rooms as parchment cells on the room grid, current room highlighted, pulsing dot at the entrance.
+- **Dungeon art bible (C):** forest ink rules apply (wobbly outlines, pre-rendered wobble variants, blob shadows) on darker ground. `PALETTE.dungeon`: floor `#C7A76F`, floor speckle `#B08F5A`, wall bark `#6B4E33`, wall rim light `#8A6642`, dark (vignette/doorways/pits) `#2E2118`, torch flame `#E8A13C`, torch glow `#F2C063`, key gold `#E3B341`, iron fittings `#7B6B57`, moth lavender `#9B8AA6`, snapper rust `#8C3B2E`. Reuse forest ink/cream/wood and desert blossom pink. Wall tiles: bark base + 2 px lighter top rim + darker bottom rim (the classic fake-depth strip), plus occasional root squiggles. Torches: pre-baked glow sprites (2–3 variants) pulsing alpha/scale at seeded phases — **no per-frame gradients**; a room-wide warm-dark vignette (baked once per room size) with soft light holes at torches sells the underground without ever going black.
+
+### The Hollow Stump — 12 rooms (pass 1 layout, passes 2–3 fill it)
+
+Deepwood-template graph, deliberately "short and fat" (Boss Keys finding: branching + one loop beats a corridor). Rooms on a 5×4 grid, entrance at bottom-center:
+
+| id | room | grammar role |
+|---|---|---|
+| R1 | Entrance hall — torches, sign, safe | sets tone; respawn point |
+| R2 | Hub — four doors, cracked wall visible (the lock shown before its key), pots | branch point |
+| R3 | Combat room (E of hub) — 3 pebblits + shutter doors | **small key 1** drops on clear |
+| R4 | Puzzle room (W of hub) — push block onto floor switch | **small key 2** in a chest that thunks open |
+| R5 | Locked door N of hub → moth gallery — gloomwings + pots | breather combat |
+| R6 | Snapper corridor — 2 snapper traps, safe lane readable | the "respect me" hazard room |
+| R7 | Item room — big chest ceremony: **Blossom Bombs** | the dungeon's gift |
+| R8 | Bomb-teaching room — cracked wall exit, pots of spare blooms | use the item 10 s after getting it |
+| R9 | One-way ledge room — drop back down toward the hub | the loop; re-entry shortcut |
+| R10 | Locked door E wing → switch maze — 2 switches, 1 needs a block, gloomwing pressure | second key spent here |
+| R11 | Boss-key room — behind the hub's cracked wall (bombs!) — **boss key** chest, snappers guard | item recontextualizes R2 |
+| R12 | Boss door (top-center) → arena: **the Great Gulper** | the exam |
+
+Key economy: 2 small keys / 2 locked doors, exact (Zelda 1's honest ratio); the first key's door is adjacent to where the key drops. Compass-style kindness: chests sparkle faintly when the room is entered.
+
+### Interactables (pass 2 — exact numbers)
+
+- **Pots:** solid, 1 staff hit smashes: 5 shard particles + puff, drop roll 30% heart / 40% trinket / 30% nothing (seeded per pot). Respawn only when the dungeon is re-entered.
+- **Push blocks:** grid-snapped, solid always. Sustained push (player walking into it) for **0.4 s** starts a one-tile tween, **180 ms ease-out-quad**; destination must be floor and empty; each block moves **once** (Zelda 1 rule) unless the room spec says re-pushable. A moving/settled block presses switches.
+- **Floor switches:** pressed while player, block, or pot sits on the tile; a block latches it permanently (soft *chunk*, switch darkens). Doors wired to switches use the same `setOpen` path. Multi-switch rooms open when ALL are latched/pressed.
+- **Chests:** closed sprite → open on interact: 300 ms lid pop with `Back.easeOut`, item rises 20 px over 400 ms with sparkle burst, dialogue line, THEN the item joins inventory (the little ceremony is non-negotiable — it is the reward's frame).
+- **Small keys:** float + bob over their spawn; collected on touch with the pickup pop; spent keys vanish from the HUD with a 200 ms shrink.
+
+### Dungeon enemies (pass 3 — numbers table; all use the existing hit-feedback stack via `hittable`)
+
+Telegraph band from the TMC decomp: every attack is preceded by **0.4–1.0 s of readable pause**. All contact damage uses existing `damagePlayer`.
+
+| enemy | HP | speed | behavior loop | damage |
+|---|---|---|---|---|
+| **Pebblit** (round pebble critter, stubby legs, sleepy eyes) | 2 | 55 px/s | walk 0.5–1.5 s in a cardinal dir → pause 0.4–1.0 s → 1-in-3: crouch telegraph 0.5 s, spit a pebble (150 px/s, straight, breaks on walls) | pebble ½ heart, contact ½ heart |
+| **Gloomwing** (dusty lavender moth, huge wings, ignores walls but not room bounds) | 1 | ease 0→90→0 px/s | rest 1.0–2.0 s (wings fold) → flutter to a point near the player with ±6 px 7 Hz sine wobble → rest | contact ½ heart |
+| **Snapper** (rust-red spiky seed pod; **unkillable hazard** — staff bonks it back 1 tile with a *tink*) | — | dash 260 px/s, retract 70 px/s | idle until player aligns within 14 px of its row/col with clear line → dash to the player's axis point or wall → retract home | contact 1 heart |
+
+Combat rooms: shutters slam 150 ms after entry, reopen + key/chest drops with a chime when the last hittable enemy poofs. Defeated dungeon enemies stay dead until the dungeon is re-entered (boss stays dead forever).
+
+### The item — Blossom Bombs (pass 4)
+
+A pouch of desert-cactus blossoms that bloom into a petal-burst — the item that ties the two biomes together.
+
+- Input: **K / Shift** (touch: a blossom button above the attack zone). Throws 100 px (2.5 tiles) forward with a small arc; fuse **1.2 s**, blink cadence doubling over the last 0.4 s; blast radius **70 px**: enemies take 2 damage + standard knockback/feedback, the player takes ½ heart if inside (gentle, but teaches spacing), **cracked walls/boulders within the radius crumble** (300 ms, 12 rubble particles + puff, permanently open). Petal burst: 16 pink particles + expanding ring + 0.15 s / 0.012 shake.
+- Supply: capacity **3**, one regrows every **8 s** (never softlocked, still rationed mid-fight); pots in bomb-rooms drop spare blooms (instant +1).
+- **≥3 uses rule** (research: an item with fewer than 3 uses gets cut): (1) dungeon progression — R8 exit + the hub's cracked wall to the boss key; (2) the boss exam; (3) overworld — **3 cracked boulders** placed deterministically near desire-line landmarks (visible from day one; each hides a trinket hoard or a heart piece), so the item re-opens the whole map.
+
+### The boss — the Great Gulper (pass 5)
+
+A huge round storybook toad-grub squatting in the arena, slime-green with a cream belly; invulnerable to the staff (bonks *tink* off its hide). Classic 3-cycle vulnerability loop (design in cycles, not HP):
+
+- **Pattern phase (~15 s):** 3 hop-slams (shadow telegraph where it lands, existing slam rings, 1 heart in zone) + a 3-glob spit volley (globs 140 px/s, ½ heart).
+- **The opening:** cheeks puff for **0.8 s** (telegraph sparkle), then it **inhales for 2.5 s**, dragging the player toward its mouth at 90 px/s. Throwing a Blossom Bomb into the inhale: gulp → muffled *pomf* → petal burst from its ears → **stunned 3.0 s** (stars, tongue out) — the only window it is `hittable`. It takes 3 staff hits per window (9 total; the combo finisher counts double, rewarding clean play).
+- **Escalation:** cycle 2 = 4 slams, ×1.2 speed; cycle 3 = 4 slams + 5-glob volley, ×1.4. Missing the window just restarts the pattern.
+- Arena: boss door slams behind you; defeat = 2 s escalating leaf-poof finale (no corpse — it burps, shrinks, and hops off sheepishly), doors open, drops a **Heart Container** (+1 max heart via `p.maxHp`, full heal, held-overhead pop) and frees **M.** — a small spectacled mole with an ink-stained satchel, the letter-writer, who walks you out with a thank-you dialogue. Losing = soft fade to R1 with everything kept; the boss resets to cycle 1.
+- **Ending:** after M is freed, a hand-lettered **"The End — the worlds keep wandering"** card (same treatment as the title) with letters-found and trinket tallies, then play continues free-roam. Finding all 5 letters BEFORE the boss adds one grateful extra line from M.
+
+**A landed anything must keep firing the existing simultaneous feedback stack** (hitstop, flash, knockback, squash, particles — acceptance criteria, not polish); new events that must fire together: door-open = leaf slide + dust puff + soft *chunk*; switch-latch = darken + *chunk* + door reaction ≤1 frame later; bomb = blink→burst→crumble→shake as one beat.
+
+### Regression checklist (after every pass)
+
+60 fps in dungeon rooms with torches + enemies active; zero console errors; same seed ⇒ identical overworld AND identical stump/boulder placement; overworld play (movement, combat, letters, camps, minimap) unchanged when the dungeon is untouched; slide transitions never desync player/camera; keys can never go negative or be double-spent; shutter rooms can never softlock (clear condition always reachable); bombs regrow so no puzzle is ever unsolvable; hitstop never freezes `requestAnimationFrame`.
+
+### Build order (one pass per session, verify between)
+
+1. **Shell:** stump landmark + enter/exit fades, room system + ASCII loader, room-locked camera + slide transitions, doors (open/shutter visuals), torches, vignette, room map HUD, all 12 rooms walkable gray-boxed in the dungeon treatment.
+2. **Interactables:** keys/locked doors/boss door, pots, push blocks, switches, chests + ceremony.
+3. **Enemies:** pebblit, gloomwing, snapper + combat-room shutters and key drops.
+4. **Item:** Blossom Bombs, cracked walls in-dungeon, the 3 overworld boulders, teaching room.
+5. **Boss & ending:** the Great Gulper, heart container, M., the End card.
