@@ -19,6 +19,8 @@ const World = {
 function worldInit(seedInt) {
   World.seedInt = seedInt;
   World.chunks.clear();
+  _landmarks.clear();
+  _edges.clear();
   World.noiseBiome = makeNoise(seedInt ^ 0xB10);
   World.noiseWater = makeNoise(seedInt ^ 0x77A);
   World.noiseTree = makeNoise(seedInt ^ 0x7EE);
@@ -119,6 +121,110 @@ function inCampClearing(wtx, wty) {
   return f.type === 'camp' && Math.hypot(wtx - f.tx, wty - f.ty) < 7;
 }
 
+/* ---------- landmarks & desire paths (polish pass 3) ---------- */
+
+// one landmark region = 40 tiles, so set pieces stay >=40 tiles apart. Each
+// rolls from a per-biome rarity table; rare entries are the "weenies" that
+// pull the player across dull space.
+const LREGION = 40;
+const LANDMARK_APRON = Object.freeze({
+  rocktrio: 4, cactusring: 6, ribcage: 7, greatskull: 5,
+  cairn: 4, fairyring: 5, stones: 6, greattree: 8,
+});
+const _landmarks = new Map();
+
+function landmarkFeature(lrx, lry) {
+  const key = lrx + ',' + lry;
+  let lm = _landmarks.get(key);
+  if (lm !== undefined) return lm;
+  const rr = rng2(lrx, lry, World.seedInt ^ 0x1A2D);
+  const tx = lrx * LREGION + 8 + ((rr() * (LREGION - 16)) | 0);
+  const ty = lry * LREGION + 8 + ((rr() * (LREGION - 16)) | 0);
+  const roll = rr(), pick = rr(), extra = rr();
+  let type = null;
+  if (roll < 0.62 && Math.hypot(tx, ty) > 12) {
+    const bl = blendAtTile(tx, ty);
+    const s = World.stumpSpot;
+    const nearStump = s && Math.hypot(tx - s.tx, ty - s.ty) < 12;
+    if (!nearStump && !isWaterTile(tx, ty) && !inCampClearing(tx, ty)) {
+      if (bl < 0.4) type = pick < 0.42 ? 'rocktrio' : pick < 0.72 ? 'cactusring' : pick < 0.92 ? 'ribcage' : 'greatskull';
+      else if (bl > 0.6) type = pick < 0.38 ? 'cairn' : pick < 0.68 ? 'fairyring' : pick < 0.92 ? 'stones' : 'greattree';
+    }
+  }
+  lm = { type, tx, ty, extra };
+  _landmarks.set(key, lm);
+  return lm;
+}
+
+// desire paths: each landmark links to its east and south neighbors' landmarks
+// (a lattice reads like a near-MST plus loops), midpoint-displaced twice.
+// Memoized per region; derived purely from seeded positions, so any chunk can
+// compute its crossings with no neighbors loaded.
+const _edges = new Map();
+
+function edgesFor(lrx, lry) {
+  const key = lrx + ',' + lry;
+  let segs = _edges.get(key);
+  if (segs !== undefined) return segs;
+  segs = [];
+  const a = landmarkFeature(lrx, lry);
+  if (a.type) {
+    for (const [nx, ny] of [[lrx + 1, lry], [lrx, lry + 1]]) {
+      const b = landmarkFeature(nx, ny);
+      if (!b.type) continue;
+      const rr = rng2(lrx * 7 + nx, lry * 7 + ny, World.seedInt ^ 0xA7B0);
+      // midpoint displacement, 2 levels, +/-15% perpendicular
+      let pts = [[a.tx * TILE, a.ty * TILE], [b.tx * TILE, b.ty * TILE]];
+      for (let level = 0; level < 2; level++) {
+        const next = [pts[0]];
+        for (let i = 1; i < pts.length; i++) {
+          const [x1, y1] = pts[i - 1], [x2, y2] = pts[i];
+          const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+          const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+          const px = -(y2 - y1) / len, py = (x2 - x1) / len;
+          const d = (rr() - 0.5) * 0.3 * len;
+          next.push([mx + px * d, my + py * d], [x2, y2]);
+        }
+        pts = next;
+      }
+      for (let i = 1; i < pts.length; i++) segs.push([pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]]);
+    }
+  }
+  _edges.set(key, segs);
+  return segs;
+}
+
+function distToSeg2(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const t = clamp(((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy || 1), 0, 1);
+  return dist2(px, py, x1 + dx * t, y1 + dy * t);
+}
+
+function nearPath(wtx, wty, radTiles) {
+  const px = (wtx + 0.5) * TILE, py = (wty + 0.5) * TILE;
+  const r2 = (radTiles * TILE) ** 2;
+  const lrx = Math.floor(wtx / LREGION), lry = Math.floor(wty / LREGION);
+  for (let dy = -1; dy <= 0; dy++) {
+    for (let dx = -1; dx <= 0; dx++) {
+      for (const s of edgesFor(lrx + dx, lry + dy)) {
+        if (distToSeg2(px, py, s[0], s[1], s[2], s[3]) < r2) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function inLandmarkApron(wtx, wty) {
+  const lrx = Math.floor(wtx / LREGION), lry = Math.floor(wty / LREGION);
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const lm = landmarkFeature(lrx + dx, lry + dy);
+      if (lm.type && Math.hypot(wtx - lm.tx, wty - lm.ty) < LANDMARK_APRON[lm.type] + 2) return true;
+    }
+  }
+  return false;
+}
+
 /* ---------- terrain baking ---------- */
 
 // union of per-cell rounded rects + seam bridges (straight edges between
@@ -211,6 +317,39 @@ function bakeTerrain(chunk) {
         ctx.moveTo(px, py);
         ctx.lineTo(px + Math.cos(a) * l, py + Math.sin(a) * l);
         ctx.stroke();
+      }
+    }
+  }
+
+  // desire paths: trodden strips between neighboring landmarks, stamped
+  // before the water so ponds naturally interrupt them. Lighter, desaturated
+  // ground in two feathered widths; props are suppressed along them.
+  {
+    const creamRgb = hexToRgb(F.cream);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const lr0x = Math.floor((ox - LREGION * TILE) / (LREGION * TILE));
+    const lr1x = Math.floor((ox + CHUNK_PX + LREGION * TILE) / (LREGION * TILE));
+    const lr0y = Math.floor((oy - LREGION * TILE) / (LREGION * TILE));
+    const lr1y = Math.floor((oy + CHUNK_PX + LREGION * TILE) / (LREGION * TILE));
+    for (let lry = lr0y; lry <= lr1y; lry++) {
+      for (let lrx = lr0x; lrx <= lr1x; lrx++) {
+        for (const s of edgesFor(lrx, lry)) {
+          const minx = Math.min(s[0], s[2]) - 80, maxx = Math.max(s[0], s[2]) + 80;
+          const miny = Math.min(s[1], s[3]) - 80, maxy = Math.max(s[1], s[3]) + 80;
+          if (maxx < ox || minx > ox + CHUNK_PX || maxy < oy || miny > oy + CHUNK_PX) continue;
+          const mbl = blendAtTile(Math.floor((s[0] + s[2]) / 2 / TILE), Math.floor((s[1] + s[3]) / 2 / TILE));
+          const pr = lerp(lerp(sandRgb[0], groundRgb[0], mbl), creamRgb[0], 0.35);
+          const pg = lerp(lerp(sandRgb[1], groundRgb[1], mbl), creamRgb[1], 0.35);
+          const pb = lerp(lerp(sandRgb[2], groundRgb[2], mbl), creamRgb[2], 0.35);
+          for (const [w, a] of [[58, 0.16], [34, 0.2]]) {
+            ctx.strokeStyle = rgbToCss(pr, pg, pb, a);
+            ctx.lineWidth = w;
+            ctx.beginPath();
+            ctx.moveTo(s[0] - ox, s[1] - oy);
+            ctx.lineTo(s[2] - ox, s[3] - oy);
+            ctx.stroke();
+          }
+        }
       }
     }
   }
@@ -325,6 +464,8 @@ function tileFreeForProp(wtx, wty) {
   if (Math.hypot(wtx, wty) < 6) return false;  // spawn clearing
   const s = World.stumpSpot;
   if (s && Math.hypot(wtx - s.tx, wty - s.ty) < 6) return false; // stump apron
+  if (inLandmarkApron(wtx, wty)) return false; // set pieces clear their stage
+  if (nearPath(wtx, wty, 1.3)) return false;   // desire paths stay walkable
   return true;
 }
 
@@ -510,6 +651,73 @@ function genChunk(cx, cy) {
       } else if (feat.type === 'slime') {
         chunk.entities.push({ kind: 'slime', tx: ftx, ty: fty });
         if (feat.extra < 0.4) chunk.entities.push({ kind: 'slime', tx: ftx + 2, ty: fty + 1 });
+      }
+    }
+  }
+
+  // landmarks: authored set pieces on the 40-tile grid. A landmark is built
+  // by EVERY chunk it overlaps — the seeded part sequence is identical, each
+  // chunk just keeps the parts that fall inside it, so borders never cut one.
+  {
+    const inMe = (wtx, wty) => wtx >= baseTx && wty >= baseTy && wtx < baseTx + CHUNK && wty < baseTy + CHUNK;
+    const lr0x = Math.floor((baseTx - 10) / LREGION), lr1x = Math.floor((baseTx + CHUNK + 10) / LREGION);
+    const lr0y = Math.floor((baseTy - 10) / LREGION), lr1y = Math.floor((baseTy + CHUNK + 10) / LREGION);
+    for (let lry = lr0y; lry <= lr1y; lry++) {
+      for (let lrx = lr0x; lrx <= lr1x; lrx++) {
+        const lm = landmarkFeature(lrx, lry);
+        if (!lm.type) continue;
+        if (lm.tx < baseTx - 10 || lm.tx >= baseTx + CHUNK + 10 ||
+            lm.ty < baseTy - 10 || lm.ty >= baseTy + CHUNK + 10) continue;
+        const rr = rng2(lm.tx, lm.ty, World.seedInt ^ 0x1A2E);
+        const place = (list, variant, dx, dy, blocking, sway, s, flip) => {
+          const wtx = lm.tx + Math.round(dx), wty = lm.ty + Math.round(dy);
+          const jx = (rr() - 0.5) * 10, jy = (rr() - 0.5) * 8;   // consume rng FIRST: identical sequence in every chunk
+          if (!inMe(wtx, wty) || isWaterTile(wtx, wty)) return;
+          addProp(list, variant, wtx, wty, jx, jy, blocking, sway, s, flip);
+        };
+        const ring = (list, n, rad, s0, blocking, sway) => {
+          for (let i = 0; i < n; i++) {
+            const a = (i / n) * Math.PI * 2 + 0.4;
+            place(list, i, Math.cos(a) * rad, Math.sin(a) * rad * 0.8, blocking, sway, s0 + rr() * 0.2, false);
+          }
+        };
+        if (lm.type === 'rocktrio') {
+          place(SPRITES.rock, 0, 0, 0, true, 0, 1.9);
+          place(SPRITES.rock, 2, 1.7, 0.7, true, 0, 1.15);
+          place(SPRITES.rock, 4, -1.5, 0.9, false, 0, 0.72);
+          for (let i = 0; i < 3; i++) place(SPRITES.knuckle, i, (rr() - 0.5) * 6, 2 + rr() * 2, false, 0, 0.7);
+        } else if (lm.type === 'cactusring') {
+          ring(SPRITES.cactus, lm.extra < 0.5 ? 5 : 7, 2.6, 0.95, true, 0);
+          place(SPRITES.knuckle, 1, 0, 0, false, 0, 0.8);
+        } else if (lm.type === 'ribcage') {
+          // colossal half-buried ribcage, walk-through
+          for (let i = 0; i < 4; i++) {
+            place(SPRITES.rib, i, -2.2 - i * 0.25, -3 + i * 2, false, 0, 2.3);
+            place(SPRITES.rib, i + 1, 2.2 + i * 0.25, -3 + i * 2, false, 0, 2.3);
+          }
+          place(SPRITES.skull, 0, 0, -4.6, true, 0, 1.5);
+        } else if (lm.type === 'greatskull') {
+          place(SPRITES.skull, 0, 0, 0, true, 0, 2.2);
+          for (let i = 0; i < 4; i++) place(SPRITES.knuckle, i, (rr() - 0.5) * 8, 2.4 + rr() * 2.4, false, 0, 0.8);
+        } else if (lm.type === 'cairn') {
+          place(SPRITES.stone, 0, 0, 0, true, 0, 1.8);
+          place(SPRITES.stone, 1, 1, 0.6, false, 0, 1.2);
+          place(SPRITES.stone, 2, -0.9, 0.7, false, 0, 0.9);
+          place(SPRITES.mushroom, 0, 1.6, -0.6, false, 0, 1.1);
+          place(SPRITES.grass, 0, -1.6, -0.4, false, 1, 1);
+        } else if (lm.type === 'fairyring') {
+          ring(SPRITES.mushroom, 7, 2.2, 1.0, false, 0);
+          for (let i = 0; i < 3; i++) place(SPRITES.grass, i, (rr() - 0.5) * 2.4, (rr() - 0.5) * 2, false, 1, 0.9);
+        } else if (lm.type === 'stones') {
+          ring(SPRITES.stone, lm.extra < 0.5 ? 5 : 7, 3, 1.75, true, 0);
+        } else if (lm.type === 'greattree') {
+          place(SPRITES.treeRound, 2, 0, 0, true, 1, 2.9);
+          markSolid(chunk, lm.tx - 1 - baseTx, lm.ty - baseTy);
+          markSolid(chunk, lm.tx + 1 - baseTx, lm.ty - baseTy);
+          markSolid(chunk, lm.tx - baseTx, lm.ty - 1 - baseTy);
+          for (let i = 0; i < 5; i++) place(SPRITES.grass, i, (rr() - 0.5) * 7, 2.6 + rr() * 2.6, false, 1, 1);
+          for (let i = 0; i < 3; i++) place(SPRITES.mushroom, 0, (rr() - 0.5) * 6, 2 + rr() * 3, false, 0, 1.1);
+        }
       }
     }
   }
