@@ -5,11 +5,10 @@
 // only, no per-frame gradients or blurs.
 const ATMOS = Object.freeze({
   CLOUD_TILE: 512,
-  CLOUD_BLOBS: 26, CLOUD_R_MIN: 80, CLOUD_R_MAX: 250,
-  SUN_BLOBS: 10, SUN_R_MIN: 150, SUN_R_MAX: 300,
-  CLOUD_BLUR: 16,                  // one bake-time blur pass, never at runtime
-  CLOUD_ALPHA: 0.11,               // forest dapple (multiply)
-  SUN_ALPHA: 0.13,                 // desert sun patches (overlay)
+  CLOUD_BLOBS: 7, CLOUD_R_MIN: 90, CLOUD_R_MAX: 230,   // sparse: gaps between shadows are the point
+  SUN_BLOBS: 6, SUN_R_MIN: 160, SUN_R_MAX: 300,
+  CLOUD_ALPHA: 0.09,               // forest dapple
+  SUN_ALPHA: 0.12,                 // desert sun patches
   CLOUD_SPEED: 16,                 // px/s, layer 1
   CLOUD_DIR: 1.25,                 // drift heading, ~20° off the wind axis
   LAYER2_SCALE: 1.7, LAYER2_SPEED: 0.6,
@@ -58,36 +57,35 @@ function buildAtmos(seedInt) {
   bakeAtmosLife(seedInt);
 }
 
-// soft blob field, edge-wrapped so it tiles, fused with one bake-time blur
+// sparse soft blob field, 9-way edge-wrapped so it tiles perfectly. Additive
+// compositing fuses overlaps without patch seams, and the radial gradients
+// are already soft — no blur pass, so no clamped hard frame at the borders
+// (the old blur bake produced an 85%-opaque fog with a hard rectangular rim,
+// which read as dark clouds popping in and out at straight edges).
 function bakeCloudTile(seed, blobs, rMin, rMax, color) {
   const S = ATMOS.CLOUD_TILE;
-  const raw = makeCanvas(S, S);
-  const ctx = raw.getContext('2d');
+  const c = makeCanvas(S, S);
+  const ctx = c.getContext('2d');
   const r = mulberry32(seed >>> 0);
+  ctx.globalCompositeOperation = 'lighter';
   for (let i = 0; i < blobs; i++) {
     const x = r() * S, y = r() * S;
     const rad = rMin + r() * (rMax - rMin);
-    const g = ctx.createRadialGradient(0, 0, rad * 0.12, 0, 0, rad);
-    g.addColorStop(0, withAlpha(color, 0.5 + r() * 0.25));
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rad);
+    g.addColorStop(0, withAlpha(color, 0.3 + r() * 0.12));
+    g.addColorStop(0.6, withAlpha(color, 0.13 + r() * 0.06));
     g.addColorStop(1, withAlpha(color, 0));
     for (let dx = -1; dx <= 1; dx++) {
       for (let dy = -1; dy <= 1; dy++) {
         ctx.save();
         ctx.translate(x + dx * S, y + dy * S);
         ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(0, 0, rad, 0, Math.PI * 2); ctx.fill();
+        ctx.fillRect(-rad, -rad, rad * 2, rad * 2);
         ctx.restore();
       }
     }
   }
-  const fused = makeCanvas(S, S);
-  const fctx = fused.getContext('2d');
-  fctx.filter = `blur(${ATMOS.CLOUD_BLUR}px)`;
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dy = -1; dy <= 1; dy++) fctx.drawImage(raw, dx * S, dy * S);
-  }
-  fctx.filter = 'none';
-  return fused;
+  return c;
 }
 
 /* ---------------- the wind ---------------- */
@@ -167,9 +165,9 @@ function drawAtmosClouds(ctx, game, ox, oy, vw, vh) {
   };
   // forest: dark dapple, two drift layers so the tiling never reads.
   // Desert: inverted — fewer, larger warm sun-bleached patches.
-  fill(Atmos.patShadow, 1, Atmos.drift1, ATMOS.CLOUD_ALPHA * 2.4 * fA * 0.6);
-  fill(Atmos.patShadow, ATMOS.LAYER2_SCALE, Atmos.drift2, ATMOS.CLOUD_ALPHA * 2.4 * fA * 0.4);
-  fill(Atmos.patSun, ATMOS.LAYER2_SCALE * 0.9, Atmos.drift1, ATMOS.SUN_ALPHA * 1.6 * dA);
+  fill(Atmos.patShadow, 1, Atmos.drift1, ATMOS.CLOUD_ALPHA * 1.6 * fA * 0.6);
+  fill(Atmos.patShadow, ATMOS.LAYER2_SCALE, Atmos.drift2, ATMOS.CLOUD_ALPHA * 1.6 * fA * 0.4);
+  fill(Atmos.patSun, ATMOS.LAYER2_SCALE * 0.9, Atmos.drift1, ATMOS.SUN_ALPHA * 1.5 * dA);
   // biome grade wash
   lctx.globalAlpha = ATMOS.WASH_ALPHA * 0.8;
   lctx.fillStyle = mixColor(PALETTE.desert.sandRim, PALETTE.forest.canopyDark, Atmos.blend);
@@ -194,7 +192,7 @@ const ATMOS_LIFE = Object.freeze({
   POLLEN_MAX: 6, POLLEN_LIFE: 18,
   BUTTERFLY_MAX: 2, BUTTERFLY_SPEED: 34, FLAP_HZ: 8,
   DUST_MAX: 5, DUST_SPEED: 300, DUST_LIFE: 0.55,
-  PARA_ALPHA: 0.34, PARA_SCROLL: 1.22, PARA_GRID: 620, PARA_SWAY: 6,
+  PARA_ALPHA: 0.2, PARA_SCROLL: 1.22, PARA_GRID: 620, PARA_SWAY: 6,
 });
 
 Atmos.life = { ripples: [], rippleT: 5, pollen: [], flies: [], dust: [], dustT: 0 };
@@ -457,7 +455,7 @@ function drawParallax(ctx, game, camX, camY, vw, vh) {
       // apparent position: anchor plus extra motion against the camera
       const px = axw + (axw - camX) * (f - 1) - (camX - vw / 2);
       const py = ayw + (ayw - camY) * (f - 1) - (camY - vh / 2);
-      if (px < -460 || px > vw + 60 || py < -260 || py > vh + 60) continue;
+      if (px < -520 || px > vw + 520 || py < -320 || py > vh + 320) continue;
       // edges only — a frond cluster hovering mid-screen reads as a smudge
       if (px > vw * 0.2 && px < vw * 0.62 && py > vh * 0.2 && py < vh * 0.62) continue;
       const sway = Math.sin(game.time * 0.5 + h) * ATMOS_LIFE.PARA_SWAY;
