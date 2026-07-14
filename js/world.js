@@ -23,6 +23,13 @@ function worldInit(seedInt) {
   World.noiseWater = makeNoise(seedInt ^ 0x77A);
   World.noiseTree = makeNoise(seedInt ^ 0x7EE);
   World.noiseCactus = makeNoise(seedInt ^ 0xCAC);
+  // art direction (polish pass 2): macro tint + per-family density fields
+  World.noiseMacroL = makeNoise(seedInt ^ 0x3AC1);   // light/dark, feature ~34 tiles
+  World.noiseMacroW = makeNoise(seedInt ^ 0x3AC2);   // warm/cool, feature ~46 tiles
+  World.noiseDenCactus = makeNoise(seedInt ^ 0xD3C1);
+  World.noiseDenRock = makeNoise(seedInt ^ 0xD3C2);
+  World.noiseDenBone = makeNoise(seedInt ^ 0xD3C3);
+  World.noiseDenGrass = makeNoise(seedInt ^ 0xD3C4);
   const r = mulberry32(seedInt ^ 0x1E7);
   World.letterSpots = [];
   for (let i = 0; i < 5; i++) {
@@ -142,12 +149,20 @@ function bakeTerrain(chunk) {
   const ctx = c.getContext('2d');
   const ox = cx * CHUNK_PX, oy = cy * CHUNK_PX;
 
-  // ground: per-tile fill lerped between sand and parchment
+  // ground: per-tile fill lerped between sand and parchment, then shifted by
+  // two very-low-frequency macro noises (light/dark + warm/cool) so large
+  // areas breathe instead of reading as flat digital fill
+  const sandRgb = hexToRgb(D.sandBase), groundRgb = hexToRgb(F.ground);
   for (let ty = -1; ty <= CHUNK; ty++) {
     for (let tx = -1; tx <= CHUNK; tx++) {
       const wtx = cx * CHUNK + tx, wty = cy * CHUNK + ty;
       const bl = blendAtTile(wtx, wty);
-      ctx.fillStyle = bl <= 0 ? D.sandBase : bl >= 1 ? F.ground : mixColor(D.sandBase, F.ground, bl);
+      const ml = 1 + (World.noiseMacroL.fbm(wtx / 34, wty / 34, 2) - 0.5) * 0.15;
+      const mw = (World.noiseMacroW.fbm(wtx / 46, wty / 46, 2) - 0.5) * 0.11;
+      ctx.fillStyle = rgbToCss(
+        clamp(lerp(sandRgb[0], groundRgb[0], bl) * ml * (1 + mw), 0, 255),
+        clamp(lerp(sandRgb[1], groundRgb[1], bl) * ml * (1 + mw * 0.25), 0, 255),
+        clamp(lerp(sandRgb[2], groundRgb[2], bl) * ml * (1 - mw), 0, 255));
       ctx.fillRect(tx * TILE - 1, ty * TILE - 1, TILE + 2, TILE + 2);
     }
   }
@@ -332,13 +347,71 @@ function genChunk(cx, cy) {
     }
   }
 
-  const addProp = (list, variant, wtx, wty, jx, jy, blocking, sway) => {
+  const addProp = (list, variant, wtx, wty, jx, jy, blocking, sway, scale, flip) => {
     const spr = Array.isArray(list) ? list[variant % list.length] : list;
-    chunk.props.push({ spr, x: (wtx + 0.5) * TILE + jx, y: (wty + 0.5) * TILE + jy, sway: sway || 0, phase: (wtx * 7 + wty * 13) % 6.28 });
+    chunk.props.push({
+      spr, x: (wtx + 0.5) * TILE + jx, y: (wty + 0.5) * TILE + jy,
+      sway: sway || 0, phase: (wtx * 7 + wty * 13) % 6.28,
+      s: scale || 1, flip: flip || false,
+    });
     if (blocking) markSolid(chunk, wtx - baseTx, wty - baseTy);
   };
 
-  // per-tile scatter
+  /* ---- clustered scatter (Thomas process over per-family density fields) ----
+     Three layers: (a) low-frequency density noise per family, remapped so
+     30-40% of the map is a TRUE void; (b) sparse parents spawning 3 or 5
+     children (rule of odds) at gaussian radius, child scale falling with
+     distance, mixed families; (c) minimum spacing between LARGE props only.
+     Scale buckets: 70% small (0.72-0.9), 25% medium (1.0-1.4), 5% big (1.8+,
+     reserved for parents so "big" stays a signal). Flip jitter forest-only —
+     desert sprites carry a baked directional shadow that must not mirror. */
+  const den = (noise, wtx, wty, lam) => {
+    const n = noise.fbm(wtx / lam, wty / lam, 2);
+    return clamp((n - 0.47) / 0.13, 0, 1);
+  };
+  const largeSpots = [];
+  const largeOk = (wtx, wty) => {
+    for (const [lx2, ly2] of largeSpots) {
+      if (Math.abs(wtx - lx2) < 3 && Math.abs(wty - ly2) < 3) return false;
+    }
+    return true;
+  };
+  const bucketScale = (r) => {
+    const b = r();
+    if (b < 0.70) return 0.72 + r() * 0.18;
+    if (b < 0.95) return 1.0 + r() * 0.4;
+    return 1.8 + r() * 0.35;
+  };
+  // family tables: parent sprite + mixed child recipes [list, blocking, sway]
+  const CHILD_MIX = {
+    cactus: () => [[SPRITES.cactus, true, 0], [SPRITES.cactus, true, 0], [SPRITES.knuckle, false, 0]],
+    rock: () => [[SPRITES.rock, false, 0], [SPRITES.knuckle, false, 0], [SPRITES.rock, false, 0]],
+    bone: () => [[SPRITES.rib, false, 0], [SPRITES.knuckle, false, 0], [SPRITES.knuckle, false, 0]],
+    grass: () => [[SPRITES.grass, false, 1], [SPRITES.stone, false, 0], [SPRITES.mushroom, false, 0]],
+  };
+  const cluster = (family, parentList, wtx, wty, r, forest, parentBlocks) => {
+    const pScale = bucketScale(r);
+    if (pScale > 1.5 && !largeOk(wtx, wty)) return;
+    if (pScale > 1.0) largeSpots.push([wtx, wty]);
+    addProp(parentList, (r() * 6) | 0, wtx, wty, (r() - 0.5) * 12, (r() - 0.5) * 8,
+      parentBlocks, forest ? 1 : 0, pScale, false);
+    const n = r() < 0.55 ? 3 : 5;                     // rule of odds
+    const mixes = CHILD_MIX[family]();
+    for (let i = 0; i < n; i++) {
+      const dx = Math.round((r() + r() - 1) * 2.6);   // ~gaussian, sigma 2-3 tiles
+      const dy = Math.round((r() + r() - 1) * 2.6);
+      if (!dx && !dy) continue;
+      const cxT = wtx + dx, cyT = wty + dy;
+      if (cxT < baseTx || cyT < baseTy || cxT >= baseTx + CHUNK || cyT >= baseTy + CHUNK) continue;
+      if (!tileFreeForProp(cxT, cyT)) continue;
+      if (chunk.solid[(cyT - baseTy) * CHUNK + (cxT - baseTx)]) continue;
+      const [list, blocks, sw] = mixes[(r() * mixes.length) | 0];
+      const cScale = clamp((0.78 + r() * 0.22) * (1 - Math.hypot(dx, dy) * 0.055), 0.5, 1);
+      addProp(list, (r() * 6) | 0, cxT, cyT, (r() - 0.5) * 18, (r() - 0.5) * 14,
+        blocks && cScale > 0.7, sw, cScale, false);
+    }
+  };
+
   for (let ty = 0; ty < CHUNK; ty++) {
     for (let tx = 0; tx < CHUNK; tx++) {
       const wtx = baseTx + tx, wty = baseTy + ty;
@@ -348,29 +421,37 @@ function genChunk(cx, cy) {
       const roll = r();
 
       if (bl < 0.45) {
+        const dc = den(World.noiseDenCactus, wtx, wty, 48);
+        const dr = den(World.noiseDenRock, wtx, wty, 64);
+        const db = den(World.noiseDenBone, wtx, wty, 44);
         const cn = World.noiseCactus.fbm(wtx / 9, wty / 9, 2);
-        if (cn > 0.60 && roll < 0.16) {
-          addProp(SPRITES.cactus, (r() * 6) | 0, wtx, wty, (r() - 0.5) * 14, (r() - 0.5) * 10, true);
-        } else if (roll < 0.012) {
-          addProp(SPRITES.rock, (r() * 5) | 0, wtx, wty, (r() - 0.5) * 12, (r() - 0.5) * 8, true);
-          if (r() < 0.5) addProp(SPRITES.rock, (r() * 5) | 0, wtx + 1, wty, (r() - 0.5) * 16, (r() - 0.5) * 10, false);
-        } else if (roll < 0.022) {
-          addProp(SPRITES.knuckle, (r() * 4) | 0, wtx, wty, (r() - 0.5) * 16, (r() - 0.5) * 12, false);
-        } else if (roll < 0.028) {
-          addProp(SPRITES.rib, (r() * 4) | 0, wtx, wty, (r() - 0.5) * 16, (r() - 0.5) * 12, false);
+        if (dc > 0 && cn > 0.58 && roll < 0.035 * dc) {
+          cluster('cactus', SPRITES.cactus, wtx, wty, r, false, true);
+        } else if (dr > 0 && roll < 0.006 * dr) {
+          cluster('rock', SPRITES.rock, wtx, wty, r, false, true);
+        } else if (db > 0 && roll < 0.005 * db) {
+          cluster('bone', SPRITES.rib, wtx, wty, r, false, false);
+        } else if (dc > 0.5 && cn > 0.62 && roll < 0.05) {
+          // patch filler: lone small cactus inside dense flats
+          addProp(SPRITES.cactus, (r() * 6) | 0, wtx, wty, (r() - 0.5) * 14, (r() - 0.5) * 10,
+            true, 0, 0.72 + r() * 0.18, false);
         }
       } else if (bl > 0.55) {
+        // trees are level geometry (forest walls) — the density fields sculpt
+        // only the walkable clutter between them
         const tn = World.noiseTree.fbm(wtx / 8, wty / 8, 3);
         if (tn > 0.55 && roll < 0.55 && !inCampClearing(wtx, wty)) {
           const conifer = r() < 0.4;
           addProp(conifer ? SPRITES.treeConifer : SPRITES.treeRound,
-            (r() * 5) | 0, wtx, wty, (r() - 0.5) * 20, (r() - 0.5) * 14, true, 1);
-        } else if (roll < 0.6 && r() < 0.17) {
-          addProp(SPRITES.grass, (r() * 4) | 0, wtx, wty, (r() - 0.5) * 24, (r() - 0.5) * 20, false, 1);
-        } else if (r() < 0.012) {
-          addProp(SPRITES.stone, (r() * 4) | 0, wtx, wty, (r() - 0.5) * 14, (r() - 0.5) * 10, false);
-        } else if (r() < 0.012) {
-          addProp(SPRITES.mushroom, 0, wtx, wty, (r() - 0.5) * 14, (r() - 0.5) * 10, false);
+            (r() * 5) | 0, wtx, wty, (r() - 0.5) * 20, (r() - 0.5) * 14, true, 1,
+            0.85 + r() * 0.32, r() < 0.4);
+        } else {
+          const dg = den(World.noiseDenGrass, wtx, wty, 40);
+          if (dg > 0 && roll < 0.022 * dg) {
+            cluster('grass', SPRITES.grass, wtx, wty, r, true, false);
+          } else if (dg > 0 && roll > 0.99 && r() < 0.5 * dg) {
+            cluster('rock', SPRITES.stone, wtx, wty, r, true, false);
+          }
         }
       } else {
         // transition band: last cacti mingle with first trees

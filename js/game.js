@@ -437,15 +437,29 @@
     for (const d of drawables) {
       if (d === p) { drawPlayer(alpha, ox, oy, boil); continue; }
       if (d.kind) { drawEntity(d, alpha, ox, oy, boil); continue; }
-      // static prop, swaying to the one global wind (gust fronts travel)
+      // static prop, swaying to the one global wind (gust fronts travel);
+      // scale buckets + forest flip jitter come from the placement pass
       const px = d.x - ox, py = d.y - oy;
+      const psc = d.s || 1;
       if (d.sway) {
         ctx.save();
         ctx.translate(px, py);
         ctx.rotate(windAt(d.x, d.y, game.time) * ATMOS.SWAY_PROP +
                    Math.sin(game.time * 1.3 + d.phase) * 0.008);
+        if (psc !== 1 || d.flip) ctx.scale(d.flip ? -psc : psc, psc);
         ctx.drawImage(d.spr.c, -d.spr.ax, -d.spr.ay);
         ctx.restore();
+      } else if (d.flip) {
+        ctx.save();
+        ctx.translate(Math.round(px), Math.round(py));
+        ctx.scale(-psc, psc);
+        ctx.drawImage(d.spr.c, -d.spr.ax, -d.spr.ay);
+        ctx.restore();
+      } else if (psc !== 1) {
+        // scaled but unflipped: the 9-arg fast path, no transform stack
+        ctx.drawImage(d.spr.c,
+          Math.round(px - d.spr.ax * psc), Math.round(py - d.spr.ay * psc),
+          d.spr.c.width * psc, d.spr.c.height * psc);
       } else {
         ctx.drawImage(d.spr.c, Math.round(px - d.spr.ax), Math.round(py - d.spr.ay));
       }
