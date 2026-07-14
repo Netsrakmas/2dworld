@@ -671,7 +671,10 @@
     const y = lerp(p.py, p.y, alpha) - oy;
     const bl = blendAtTile(Math.floor(p.x / TILE), Math.floor(p.y / TILE));
     const style = Dungeon.active ? 'forest' : bl < 0.5 ? 'desert' : 'forest';
-    const frame = p.moving ? ((p.walkT | 0) % 2) : 0;
+    // 4-frame stride with HELD contact poses (non-uniform timing reads as
+    // hand-animated; uniform playback reads robotic)
+    const ph = p.walkT % 4;
+    const frame = p.moving ? (ph < 1.3 ? 0 : ph < 2 ? 1 : ph < 3.3 ? 2 : 3) : 0;
     const spr = SPRITES.player[style][p.dir][frame][boil];
     const side = p.dir === 2 ? -1 : 1;
     const attacking = p.attackState !== 'none' && p.swing;
@@ -707,7 +710,9 @@
     ctx.save();
     ctx.translate(Math.round(x), Math.round(y));
     if (bodyLean) ctx.rotate(bodyLean);
-    ctx.scale(2 - p.squash, p.squash);
+    // idle breathing: 3.4s period, feet-pivoted, X counter-scaled
+    const breathe = p.moving ? 0 : Math.sin(game.time * (Math.PI * 2 / 3.4)) * 0.025;
+    ctx.scale((2 - p.squash) * (1 - breathe), p.squash * (1 + breathe));
     ctx.drawImage(spr.c, -spr.ax, -spr.ay);
     ctx.restore();
 

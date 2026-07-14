@@ -405,73 +405,164 @@ function drawLetter(ctx, w, h, rng) {
 function drawPlayerBody(ctx, w, h, rng, dir, frame, outline) {
   const F = PALETTE.forest;
   const cx = w / 2;
-  const bob = frame ? 1.5 : 0;
-  const stepL = frame ? 2.5 : 0, stepR = frame ? -2.5 : 0;
+  const side = dir === 2 || dir === 3;
+  const up = dir === 1;
+  // 4-frame stride: 0 contact-L / 1 pass / 2 contact-R / 3 pass.
+  // The body RISES on pass frames (fast-up, slow-sink — never a pure sine).
+  const pass = frame === 1 || frame === 3;
+  const yo = pass ? -2.2 : 0;
+  const stepA = frame === 0 ? 3.5 : frame === 2 ? -3.5 : 0;
+  const hem = frame === 1 ? 1.5 : frame === 3 ? -1.5 : 0;   // cloth sway
+  const tailBend = [2.2, -1.2, 2.2, -2.6][frame] + (rng() - 0.5) * 1.6;
+  const hoodHi = shade(F.hood, 1.14);
+  const scarf = F.letterStamp;
   ctx.strokeStyle = F.ink;
   ctx.lineWidth = 2.2;
-  const flip = dir === 2 ? -1 : 1;
   ctx.save();
   if (dir === 2) { ctx.translate(w, 0); ctx.scale(-1, 1); }
 
   // (staff is a separate animated layer — see SPRITES.staff)
-  const side = dir === 2 || dir === 3;
   const staffX = side ? cx + 13 : cx + 15;
 
-  // feet
+  // feet step along the travel axis: vertical for up/down, horizontal for side
   ctx.fillStyle = F.ink;
-  ctx.beginPath(); ctx.ellipse(cx - 6, h * 0.92 + stepL * 0.4, 4.5, 3, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(cx + 6, h * 0.92 + stepR * 0.4, 4.5, 3, 0, 0, Math.PI * 2); ctx.fill();
+  if (side) {
+    ctx.beginPath(); ctx.ellipse(cx - 4 - stepA, h * 0.92, 4.5, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 5 + stepA, h * 0.92, 4.5, 3, 0, 0, Math.PI * 2); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.ellipse(cx - 6, h * 0.92 + stepA * 0.5, 4.5, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 6, h * 0.92 - stepA * 0.5, 4.5, 3, 0, 0, Math.PI * 2); ctx.fill();
+  }
 
-  // cloak body (rounded triangle)
+  // scarf tail ribbon: anchored at the neck, free at the tip
+  const drawTail = (tx, ty, dx, bend, len) => {
+    ctx.fillStyle = scarf;
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.quadraticCurveTo(tx + dx * len * 0.5, ty + 3 + bend, tx + dx * len, ty + 7 + bend * 1.6);
+    ctx.quadraticCurveTo(tx + dx * len * 0.55, ty + 7 + bend, tx, ty + 4.5);
+    ctx.closePath();
+    ctx.fill();
+    if (outline) { ctx.lineWidth = 1.6; ctx.stroke(); ctx.lineWidth = 2.2; }
+  };
+  if (side) drawTail(cx - 9, h * 0.4 + yo, -1, tailBend, 13);   // streams behind
+
+  // cloak body: rounded triangle with a scalloped 2-notch cloth hem
   ctx.fillStyle = F.hood;
-  ctx.strokeStyle = F.ink; ctx.lineWidth = 2.2;
   ctx.beginPath();
-  ctx.moveTo(cx, h * 0.28 + bob);
-  ctx.quadraticCurveTo(cx - 17, h * 0.5 + bob, cx - 13, h * 0.88);
-  ctx.quadraticCurveTo(cx, h * 0.94, cx + 13, h * 0.88);
-  ctx.quadraticCurveTo(cx + 17, h * 0.5 + bob, cx, h * 0.28 + bob);
+  ctx.moveTo(cx, h * 0.28 + yo);
+  ctx.quadraticCurveTo(cx - 17, h * 0.5 + yo, cx - 13 + hem, h * 0.88);
+  ctx.quadraticCurveTo(cx - 8 + hem, h * 0.955, cx - 4 + hem, h * 0.9);
+  ctx.quadraticCurveTo(cx + hem, h * 0.955, cx + 4 + hem, h * 0.9);
+  ctx.quadraticCurveTo(cx + 9 + hem, h * 0.955, cx + 13 + hem, h * 0.88);
+  ctx.quadraticCurveTo(cx + 17, h * 0.5 + yo, cx, h * 0.28 + yo);
   ctx.closePath();
   ctx.fill();
   if (outline) ctx.stroke();
-  // cloak shade panel
+
+  // lower-third shade band (light comes from the top — never pillow-rimmed)
   ctx.fillStyle = F.hoodDark;
   ctx.beginPath();
-  ctx.moveTo(cx + 2, h * 0.34 + bob);
-  ctx.quadraticCurveTo(cx + 14, h * 0.55 + bob, cx + 10, h * 0.86);
-  ctx.quadraticCurveTo(cx + 13, h * 0.6 + bob, cx + 2, h * 0.34 + bob);
+  ctx.moveTo(cx - 12.2 + hem, h * 0.82);
+  ctx.quadraticCurveTo(cx + hem, h * 0.9, cx + 12.2 + hem, h * 0.82);
+  ctx.quadraticCurveTo(cx + 13 + hem, h * 0.86, cx + 11 + hem, h * 0.885);
+  ctx.quadraticCurveTo(cx + hem, h * 0.945, cx - 11 + hem, h * 0.885);
+  ctx.quadraticCurveTo(cx - 13 + hem, h * 0.86, cx - 12.2 + hem, h * 0.82);
   ctx.closePath(); ctx.fill();
+
+  // one-side shade panel
+  ctx.fillStyle = F.hoodDark;
+  ctx.beginPath();
+  ctx.moveTo(cx + 2, h * 0.34 + yo);
+  ctx.quadraticCurveTo(cx + 14, h * 0.55 + yo, cx + 10 + hem, h * 0.84);
+  ctx.quadraticCurveTo(cx + 13, h * 0.6 + yo, cx + 2, h * 0.34 + yo);
+  ctx.closePath(); ctx.fill();
+
+  // back seam on the up-facing view (the informative pixels change, not the body)
+  if (up) {
+    ctx.strokeStyle = withAlpha(F.ink, 0.55);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(cx, h * 0.36 + yo);
+    ctx.quadraticCurveTo(cx + hem, h * 0.62, cx + hem * 0.6, h * 0.86);
+    ctx.stroke();
+    ctx.strokeStyle = F.ink;
+    ctx.lineWidth = 2.2;
+  }
 
   // hand + staff grip
   ctx.fillStyle = F.hood;
-  ctx.beginPath(); ctx.arc(staffX - 1, h * 0.55 + bob, 4, 0, Math.PI * 2); ctx.fill();
-  if (outline) { ctx.strokeStyle = F.ink; ctx.lineWidth = 1.6; ctx.stroke(); }
+  ctx.beginPath(); ctx.arc(staffX - 1, h * 0.55 + yo, 4, 0, Math.PI * 2); ctx.fill();
+  if (outline) { ctx.lineWidth = 1.6; ctx.stroke(); ctx.lineWidth = 2.2; }
 
-  // pointed hood (big, covers eyes)
+  // the scarf: the one saturated accent (60/30/10)
+  ctx.fillStyle = scarf;
+  rr(ctx, cx - 9, h * 0.40 + yo, 18, 5.5, 2.75);
+  ctx.fill();
+  if (outline) { ctx.lineWidth = 1.6; ctx.stroke(); ctx.lineWidth = 2.2; }
+  if (up) {
+    drawTail(cx - 7, h * 0.44 + yo, -0.45, tailBend, 9);
+    drawTail(cx + 7, h * 0.44 + yo, 0.45, -tailBend, 9);
+  } else if (!side) {
+    drawTail(cx + 8, h * 0.42 + yo, 0.55, tailBend, 11);
+  }
+
+  // pointed hood (big, covers the eyes)
   ctx.fillStyle = F.hood;
-  ctx.strokeStyle = F.ink; ctx.lineWidth = 2.2;
   ctx.beginPath();
-  ctx.moveTo(cx - 12, h * 0.34 + bob);
-  ctx.quadraticCurveTo(cx - 14, h * 0.16 + bob, cx - 2, h * 0.06 + bob);
-  ctx.quadraticCurveTo(cx + 4, h * 0.03 + bob, cx + 6, h * 0.1 + bob);
-  ctx.quadraticCurveTo(cx + 15, h * 0.2 + bob, cx + 12, h * 0.36 + bob);
-  ctx.quadraticCurveTo(cx, h * 0.46 + bob, cx - 12, h * 0.34 + bob);
+  ctx.moveTo(cx - 12, h * 0.34 + yo);
+  ctx.quadraticCurveTo(cx - 14, h * 0.16 + yo, cx - 2, h * 0.06 + yo);
+  ctx.quadraticCurveTo(cx + 4, h * 0.03 + yo, cx + 6, h * 0.1 + yo);
+  ctx.quadraticCurveTo(cx + 15, h * 0.2 + yo, cx + 12, h * 0.36 + yo);
+  ctx.quadraticCurveTo(cx, h * 0.46 + yo, cx - 12, h * 0.34 + yo);
   ctx.closePath();
   ctx.fill();
   if (outline) ctx.stroke();
 
+  // hood tip: counter-bobs against the stride, trails the travel direction
+  const tipDip = pass ? 1.4 : -0.8;
+  ctx.fillStyle = F.hood;
+  ctx.beginPath();
+  if (side) {
+    // beak points 4px toward travel; a little trailing tip at the back
+    ctx.moveTo(cx + 10, h * 0.14 + yo);
+    ctx.quadraticCurveTo(cx + 19, h * 0.16 + yo + tipDip, cx + 16, h * 0.24 + yo);
+    ctx.quadraticCurveTo(cx + 12, h * 0.26 + yo, cx + 10, h * 0.14 + yo);
+  } else if (up) {
+    // tip hangs down the back, in full view
+    ctx.moveTo(cx - 3, h * 0.3 + yo);
+    ctx.quadraticCurveTo(cx + tailBend * 0.6, h * 0.44 + yo + tipDip, cx + 1, h * 0.47 + yo + tipDip);
+    ctx.quadraticCurveTo(cx + 4, h * 0.4 + yo, cx + 5, h * 0.3 + yo);
+  } else {
+    // down: a nub peeking over the crown
+    ctx.moveTo(cx + 1, h * 0.055 + yo);
+    ctx.quadraticCurveTo(cx + 5, h * 0.0 + yo + tipDip * 0.5, cx + 8, h * 0.06 + yo);
+    ctx.quadraticCurveTo(cx + 5, h * 0.08 + yo, cx + 1, h * 0.055 + yo);
+  }
+  ctx.closePath();
+  ctx.fill();
+  if (outline) { ctx.lineWidth = 1.8; ctx.stroke(); ctx.lineWidth = 2.2; }
+
+  // hood dome highlight (top light, crescent on the crown)
+  ctx.fillStyle = hoodHi;
+  ctx.beginPath();
+  ctx.moveTo(cx - 9, h * 0.18 + yo);
+  ctx.quadraticCurveTo(cx - 7, h * 0.075 + yo, cx + 1, h * 0.06 + yo);
+  ctx.quadraticCurveTo(cx - 3, h * 0.105 + yo, cx - 6.2, h * 0.21 + yo);
+  ctx.closePath(); ctx.fill();
+
   if (dir !== 1) {
-    // face shadow under hood with a hint of chin
+    // face shadow under the hood with a hint of chin
     ctx.fillStyle = F.ink;
     ctx.beginPath();
-    ctx.ellipse(cx + (side ? 4 : 0), h * 0.36 + bob, 8.5, 4.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx + (side ? 5 : 0), h * 0.36 + yo, 8.5, 4.5, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = shade(F.cream, 0.92);
     ctx.beginPath();
-    ctx.ellipse(cx + (side ? 5 : 0), h * 0.395 + bob, 5.5, 2.2, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx + (side ? 6 : 0), h * 0.395 + yo, 5.5, 2.2, 0, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
-  return flip;
 }
 
 function drawOgre(ctx, w, h, rng, frame) {
@@ -836,7 +927,7 @@ function buildSprites(seedInt) {
     SPRITES.player[style] = [];
     for (let dir = 0; dir < 4; dir++) {
       SPRITES.player[style][dir] = [];
-      for (let frame = 0; frame < 2; frame++) {
+      for (let frame = 0; frame < 4; frame++) {
         SPRITES.player[style][dir][frame] = [];
         for (let boil = 0; boil < 2; boil++) {
           const rr2 = mulberry32(hash2i(dir * 4 + frame, boil, seedInt ^ 0xB01));

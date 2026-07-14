@@ -411,3 +411,21 @@ A huge round storybook toad-grub squatting in the arena, slime-green with a crea
 3. **Enemies:** pebblit, gloomwing, snapper + combat-room shutters and key drops.
 4. **Item:** Blossom Bombs, cracked walls in-dungeon, the 3 overworld boulders, teaching room.
 5. **Boss & ending:** the Great Gulper, heart container, M., the End card.
+
+
+---
+
+## THE CHARACTER GLOW-UP (feature-addition prompt — run after the Zelda + polish updates)
+
+Upgrade the hooded wanderer from "reads correctly" to "the charming thing you can't stop watching." Procedural only, palette-locked, baked once — the sprite architecture (`SPRITES.player[style][dir][frame][boil]`) stays; frames go from 2 to 4.
+
+**Map of what exists:** `drawPlayerBody` in `js/sprites.js` (single hood tone + one shade panel, 2-frame bob); frame selection + idle handling in `js/game.js` `drawPlayer`. Do NOT touch movement, combat, the staff layer, or the smear system.
+
+**Spec (numbers from the character research, RESEARCH.md §10):**
+- **Walk = 4 baked frames** (contact-L / pass / contact-R / pass) at the existing 8 fps advance, with **held contacts**: frame mapping from the stride phase holds contact poses ~1.8x longer than passes (Slynyrd's non-uniform timing rule). Bob: body rises **2.2px on pass frames** (fast-up feel), sits low on contacts; feet step ±3.5px along the travel axis (vertical for up/down facings, horizontal for side); NEVER a pure sine.
+- **Scarf accent (the 10% of 60/30/10):** letter-stamp red neck wrap + a trailing tail ribbon, tail bend varying per frame (±2.5px hem) and per boil variant — cloth flutter, anchored still at the neck, free at the tip; on the up-facing both tail tips show; on side facings the tail streams behind the travel direction.
+- **Three-tone hood/cloak, light from the top:** highlight arc on the hood dome (hood x1.14), shade band inside the hood opening + under the rim + the cloak's lower third (hoodDark) — no pillow shading; scalloped 2-notch cloth hem with ±1.5px per-frame sway.
+- **Facing distinctness:** down = face crescent + chin under the hood; up = featureless hood back with an ink seam + hanging hood tip + both scarf tips; side = hood beak extended 4px toward travel, face crescent shifted forward, lead foot.
+- **Idle breathing:** scaleY 1.025 at a 3.4s period, pivoted at the feet, X counter-scaled — applied at draw time in `drawPlayer`, never baked.
+
+**Acceptance:** all four facings distinguishable in freeze-frame; walk reads as stepping, not bobbing; the scarf is the brightest saturated element on screen; both biome treatments intact (ink outline forest / flat + offset shadow desert); 60 fps; zero console errors; combat/staff visuals unchanged.
