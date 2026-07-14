@@ -65,29 +65,26 @@ const DUNGEON = Object.freeze({
 const Dungeon = {
   built: false,
   active: false,
-  rooms: new Map(),                // "gx,gy" -> room
-  doors: new Map(),                // edgeKey -> { type, state, anim }
-  cur: null,
-  visited: new Set(),
+  defs: [],                        // built dungeon instances (Hollow Stump, Marrow Den)
+  d: null,                         // the ACTIVE dungeon instance
   slide: null,                     // { t, camFrom, camTo, pFrom, pTo, toRoom, hop }
   fade: null,                      // { t, phase: 'out'|'in', onMid }
   saved: null,                     // stashed overworld state while inside
-  keys: 0, bossKey: false,
   vignette: null, vigW: 0, vigH: 0,
-  leaves: {},                      // baked door-leaf sprites
-  spr: {},                         // baked interactable sprites
-  // session-long flags: chests stay open forever, latched switches stay
-  // latched; smashed pots regrow and enemies respawn when re-entering
-  flags: { smashed: new Set(), latched: new Set(), chests: new Set(), keysTaken: new Set(), dead: new Set(),
-           bossDefeated: false, heartTaken: false, metM: false },
+  leaves: {},                      // baked door-leaf sprites (shared)
+  spr: {},                         // baked interactable sprites (shared)
   combatLock: null,                // { room, armT } while a combat room is sealing/sealed
   inhaling: null,                  // the boss, while it vacuums (bombs home in on it)
 };
 
-// what each chest holds, by room
-const CHEST_CONTENTS = { '1,2': 'key', '0,1': 'bombs', '3,1': 'bosskey' };
-// which rooms' switches drive what: a chest unlock or a door edge
-const SWITCH_WIRES = { '1,2': { chest: true }, '4,2': { door: ['4,1', '4,2'] } };
+// every dungeon-scoped field forwards to the active instance, so all logic
+// (and the headless test suites) keep addressing Dungeon.rooms / .keys / ...
+for (const k of ['rooms', 'doors', 'cur', 'visited', 'keys', 'bossKey', 'flags']) {
+  Object.defineProperty(Dungeon, k, {
+    get() { return Dungeon.d[k]; },
+    set(v) { Dungeon.d[k] = v; },
+  });
+}
 
 /* ---------------- authored rooms ----------------
    15 columns x 11 rows. '#' wall, 'T' wall with a torch sconce, '.' floor.
@@ -254,6 +251,197 @@ const DUNGEON_ROOMS = [
   ]},
 ];
 
+// ---- dungeon 2: the Marrow Den (desert, post-game remix) ----
+// Bombs are the ticket in: the hub's east wall is cracked from the start.
+const MARROW_ROOMS = [
+  { key: '2,3', name: 'Jaw Gallery', map: [
+    '####T#####T####',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#....P...P....#',
+    '#.............#',
+    '####T#####T####',
+  ]},
+  { key: '2,2', name: 'Hollow Crown', map: [
+    '###T#######T###',
+    '#.............#',
+    '#..#.......#..#',
+    '#.............#',
+    '#.....#.#.....#',
+    '#.............#',
+    '#.....#.#.....#',
+    '#.............#',
+    '#..#.......#..#',
+    '#..P.......P..#',
+    '###T#######T###',
+  ]},
+  { key: '3,2', name: 'Gnawed Vault', map: [
+    '###############',
+    '#.............#',
+    '#..#.......#..#',
+    '#....o...o....#',
+    '#......k......#',
+    '#..x.......x..#',
+    '#....o...o....#',
+    '#.............#',
+    '#..#.......#..#',
+    '#.............#',
+    '###############',
+  ]},
+  { key: '1,2', name: 'Twin Weights', map: [
+    '###T#######T###',
+    '#......C......#',
+    '#....#...#....#',
+    '#..B.......B..#',
+    '#.............#',
+    '#.............#',
+    '#....s...s....#',
+    '#.............#',
+    '#....#...#....#',
+    '#..P.......P..#',
+    '###############',
+  ]},
+  { key: '2,1', name: 'Moth Choir', map: [
+    '######T#T######',
+    '#..m.......m..#',
+    '#.............#',
+    '#....##.##....#',
+    '#..m.......m..#',
+    '#.............#',
+    '#....##.##....#',
+    '#......m......#',
+    '#.............#',
+    '#.............#',
+    '######T#T######',
+  ]},
+  { key: '1,1', name: 'Needle Run', map: [
+    '###############',
+    '#.............#',
+    '#..########...#',
+    '#...x.........#',
+    '#.............#',
+    '#......x......#',
+    '#.............#',
+    '#.........x...#',
+    '#...########..#',
+    '#.............#',
+    '###############',
+  ]},
+  { key: '0,1', name: 'Bloom Hollow', map: [
+    '####T#####T####',
+    '#.............#',
+    '#..#.......#..#',
+    '#......C......#',
+    '#..#.......#..#',
+    '#.............#',
+    '#....P.P.P....#',
+    '#.............#',
+    '#..#.......#..#',
+    '#.............#',
+    '###############',
+  ]},
+  { key: '0,2', name: 'Dust Cellar', map: [
+    '###############',
+    '#.............#',
+    '#..P.......P..#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#..P.......P..#',
+    '#.............#',
+    '###############',
+  ]},
+  { key: '4,2', name: 'Tooth Hoard', map: [
+    '###############',
+    '#.............#',
+    '#..P..P..P....#',
+    '#.............#',
+    '#......C......#',
+    '#.............#',
+    '#....P..P..P..#',
+    '#.............#',
+    '#..P.......P..#',
+    '#.............#',
+    '###############',
+  ]},
+  { key: '3,1', name: 'High Molar', map: [
+    '####T#####T####',
+    '#.............#',
+    '#.............#',
+    '#......C......#',
+    '#...x.....x...#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '###############',
+  ]},
+  { key: '2,0', name: "The Elder's Gullet", map: [
+    '###T#######T###',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#.............#',
+    '#......X......#',
+    '#.............#',
+    '#.............#',
+    '######T#T######',
+  ]},
+];
+
+const MARROW_EDGES = [
+  ['2,3', '2,2', 'open'],
+  ['2,2', '1,2', 'open'],
+  ['2,2', '3,2', 'cracked'],   // bombs are the entry fee — the item gate
+  ['2,2', '2,1', 'locked'],    // key 1 (Gnawed Vault combat drop)
+  ['3,2', '4,2', 'locked'],    // key 2 (Twin Weights chest) -> treasure vault
+  ['2,1', '1,1', 'open'],
+  ['2,1', '3,1', 'cracked'],
+  ['2,1', '2,0', 'boss'],
+  ['1,1', '0,1', 'open'],
+  ['0,1', '0,2', 'open'],
+  ['0,2', '1,2', 'cracked'],
+  ['3,1', '3,2', 'ledge'],
+];
+
+// dungeon definition table — a new dungeon is one more entry here
+const DUNGEON_DEF_TABLE = [
+  {
+    name: 'The Hollow Stump',
+    roomDefs: null, edgeDefs: null,   // filled below (the original data)
+    chestContents: { '1,2': 'key', '0,1': 'bombs', '3,1': 'bosskey' },
+    wires: { '1,2': { chest: true }, '4,2': { door: ['4,1', '4,2'] } },
+    spawnRoom: '2,3',
+    theme: null,                      // PALETTE.dungeon
+    bossSpeed: 1,
+    aftermath: 'mole',
+    enterDialog: 'The Hollow Stump. Somewhere below, a quill is still scratching.',
+    exitSpot: () => World.stumpSpot,
+  },
+  {
+    name: 'The Marrow Den',
+    roomDefs: MARROW_ROOMS, edgeDefs: MARROW_EDGES,
+    chestContents: { '1,2': 'key', '0,1': 'trinkets', '4,2': 'trinkets', '3,1': 'bosskey' },
+    wires: { '1,2': { chest: true } },
+    spawnRoom: '2,3',
+    theme: 'marrow',
+    bossSpeed: 1.25,
+    aftermath: 'hat',
+    enterDialog: 'The Marrow Den. The air hums like a held breath, and the walls are polished bone.',
+    exitSpot: () => World.skullSpot,
+  },
+];
+
 // room-to-room edges: [roomA, roomB, type]. Sides are derived from the grid.
 // 'ledge' is one-way (A -> B only); R1 additionally owns the 'exit' door south.
 const DUNGEON_EDGES = [
@@ -282,11 +470,46 @@ function roomAt(gx, gy) { return Dungeon.rooms.get(gx + ',' + gy); }
 /* ---------------- build ---------------- */
 
 function buildDungeon(seedInt) {
-  const DN = PALETTE.dungeon;
-  Dungeon.rooms.clear();
-  Dungeon.doors.clear();
+  Dungeon.defs = [];
+  DUNGEON_DEF_TABLE[0].roomDefs = DUNGEON_ROOMS;
+  DUNGEON_DEF_TABLE[0].edgeDefs = DUNGEON_EDGES;
+  bakeDoorLeaves(seedInt);
+  bakeDungeonProps(seedInt);
+  for (const table of DUNGEON_DEF_TABLE) {
+    const inst = buildDungeonInstance(table, seedInt);
+    Dungeon.defs.push(inst);
+  }
+  Dungeon.d = Dungeon.defs[0];
+  Dungeon.built = true;
+  window.__dungeon = Dungeon;   // debug/testing hook
+  Dungeon.debugOpenAll = () => {
+    for (const d of Dungeon.d.doors.values()) {
+      if (d.type !== 'ledge') { d.state = 'open'; d.anim = 1; }
+    }
+  };
+}
 
-  for (const def of DUNGEON_ROOMS) {
+function buildDungeonInstance(table, seedInt) {
+  const inst = {
+    name: table.name,
+    rooms: new Map(),
+    doors: new Map(),
+    cur: null,
+    visited: new Set(),
+    keys: 0, bossKey: false,
+    flags: { smashed: new Set(), latched: new Set(), chests: new Set(), keysTaken: new Set(), dead: new Set(),
+             bossDefeated: false, heartTaken: false, metM: false },
+    chestContents: table.chestContents,
+    wires: table.wires,
+    spawnRoom: table.spawnRoom,
+    theme: table.theme ? Object.assign({}, PALETTE.dungeon, PALETTE[table.theme]) : PALETTE.dungeon,
+    bossSpeed: table.bossSpeed,
+    aftermath: table.aftermath,
+    enterDialog: table.enterDialog,
+    exitSpot: table.exitSpot,
+  };
+
+  for (const def of table.roomDefs) {
     const [gx, gy] = def.key.split(',').map(Number);
     const room = {
       key: def.key, gx, gy, name: def.name,
@@ -310,36 +533,27 @@ function buildDungeon(seedInt) {
         }
       }
     }
-    Dungeon.rooms.set(def.key, room);
+    inst.rooms.set(def.key, room);
   }
 
   // doors: carve a 1-tile gap at the center of each connected side
-  for (const [aKey, bKey, type] of DUNGEON_EDGES) {
-    const a = Dungeon.rooms.get(aKey), b = Dungeon.rooms.get(bKey);
+  for (const [aKey, bKey, type] of table.edgeDefs) {
+    const a = inst.rooms.get(aKey), b = inst.rooms.get(bKey);
     const door = { type, state: type === 'open' ? 'open' : 'closed', anim: type === 'open' ? 1 : 0, key: edgeKey(aKey, bKey) };
-    Dungeon.doors.set(door.key, door);
+    inst.doors.set(door.key, door);
     const dx = b.gx - a.gx, dy = b.gy - a.gy;
     const sideA = dx === 1 ? 'E' : dx === -1 ? 'W' : dy === 1 ? 'S' : 'N';
     carveDoor(a, sideA, door, b);
     if (type !== 'ledge') carveDoor(b, opposite(sideA), door, a);
   }
   // the entrance hall's south door leads back to the overworld
-  const r1 = Dungeon.rooms.get(DUNGEON.SPAWN_ROOM);
+  const r1 = inst.rooms.get(inst.spawnRoom);
   const exitDoor = { type: 'exit', state: 'open', anim: 1, key: 'exit' };
-  Dungeon.doors.set('exit', exitDoor);
+  inst.doors.set('exit', exitDoor);
   carveDoor(r1, 'S', exitDoor, null);
 
-  bakeDoorLeaves(seedInt);
-  bakeDungeonProps(seedInt);
-  for (const room of Dungeon.rooms.values()) room.canvas = bakeRoom(room, seedInt);
-
-  Dungeon.built = true;
-  window.__dungeon = Dungeon;   // debug/testing hook
-  Dungeon.debugOpenAll = () => {
-    for (const d of Dungeon.doors.values()) {
-      if (d.type !== 'ledge') { d.state = 'open'; d.anim = 1; }
-    }
-  };
+  for (const room of inst.rooms.values()) room.canvas = bakeRoom(room, seedInt, inst.theme);
+  return inst;
 }
 
 function opposite(s) { return s === 'N' ? 'S' : s === 'S' ? 'N' : s === 'E' ? 'W' : 'E'; }
@@ -372,8 +586,8 @@ function torchAnchor(room, lx, ly, map) {
 
 /* ---------------- baking ---------------- */
 
-function bakeRoom(room, seedInt) {
-  const DN = PALETTE.dungeon, F = PALETTE.forest;
+function bakeRoom(room, seedInt, theme) {
+  const DN = theme || PALETTE.dungeon, F = PALETTE.forest;
   const c = makeCanvas(ROOM_PX_W, ROOM_PX_H);
   const ctx = c.getContext('2d');
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
@@ -898,6 +1112,24 @@ function bakeDungeonProps(seedInt) {
   }
 
   {
+    // M.'s much-chewed pointed hat (the Marrow Den's sentimental treasure)
+    const R = mulberry32(seedInt ^ 0x4A7);
+    S.hat = sprite(34, 30, 17, 24, (ctx) => {
+      const F = PALETTE.forest;
+      blobShadow(ctx, 17, 25, 10, 3);
+      Sketch.blob(ctx, [[5, 22], [12, 20], [15, 6], [19, 4], [23, 20], [29, 22], [26, 25], [8, 25]], R,
+        { fill: F.trunk, stroke: F.ink, lineWidth: 2, rough: 1.6 });
+      ctx.strokeStyle = withAlpha(F.ink, 0.6); ctx.lineWidth = 1.4;
+      Sketch.line(ctx, 9, 21, 26, 21, R, { rough: 1.2, passes: 1 });
+      // ink stains + a nibble out of the brim
+      ctx.fillStyle = withAlpha(F.ink, 0.5);
+      ctx.beginPath(); ctx.arc(22, 17, 2.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = PALETTE.dungeon.floor;
+      ctx.beginPath(); ctx.arc(7, 23, 2.4, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  {
     // cracked boulder (overworld bomb-gated cache)
     const R = mulberry32(seedInt ^ 0xB01D);
     S.boulder = sprite(66, 60, 33, 52, (ctx) => {
@@ -970,9 +1202,9 @@ function activateRoom(game, room) {
       game.entities.push(e);
     } else if (sp.ch === 'C') {
       const id = room.key + ':chest';
-      const contents = CHEST_CONTENTS[room.key] || 'trinkets';
+      const contents = Dungeon.d.chestContents[room.key] || 'trinkets';
       const opened = Dungeon.flags.chests.has(id);
-      const wired = SWITCH_WIRES[room.key] && SWITCH_WIRES[room.key].chest;
+      const wired = Dungeon.d.wires[room.key] && Dungeon.d.wires[room.key].chest;
       const e = { kind: 'dchest', id, contents, x: wx, y: wy, px: wx, py: wy, lx: sp.lx, ly: sp.ly,
                   state: opened ? 'open' : (wired && !solved) ? 'locked' : 'closed',
                   openT: 0, sparkleT: Math.random() * 2 };
@@ -1011,10 +1243,28 @@ function spawnArenaAftermath(game, room, wx, wy) {
   if (!Dungeon.flags.heartTaken) {
     game.entities.push({ kind: 'heartContainer', x: wx, y: wy - TILE, px: wx, py: wy - TILE, bobT: 0 });
   }
-  const my = wy + TILE * 1.2;
-  const m = { kind: 'mole', x: wx, y: my, px: wx, py: my, bobT: Math.random() * 6 };
-  m.interact = { label: 'talk', action: () => talkToM(game, m) };
-  game.entities.push(m);
+  if (Dungeon.d.aftermath === 'mole') {
+    const my = wy + TILE * 1.2;
+    const m = { kind: 'mole', x: wx, y: my, px: wx, py: my, bobT: Math.random() * 6 };
+    m.interact = { label: 'talk', action: () => talkToM(game, m) };
+    game.entities.push(m);
+  } else if (Dungeon.d.aftermath === 'hat' && !game.hasHat) {
+    // the Elder coughs up M.'s hat — eaten twice, returned once
+    const hy = wy + TILE * 1.1;
+    game.entities.push({ kind: 'hat', x: wx, y: hy, px: wx, py: hy, bobT: 0 });
+  }
+}
+
+function updateHat(e, game, dt) {
+  e.bobT += dt;
+  const p = game.player;
+  if (dist2(p.x, p.y, e.x, e.y) < 26 * 26) {
+    game.hasHat = true;
+    game.burst(e.x, e.y - 8, 10, PALETTE.forest.woodLight);
+    game.floatText(e.x, e.y - 30, "M.'s hat!");
+    game.showDialog("A small, much-chewed pointed hat with an ink-stained brim. Somebody misses this <i>very much</i>.");
+    game.removeEntity(e);
+  }
 }
 
 function talkToM(game, m) {
@@ -1025,6 +1275,11 @@ function talkToM(game, m) {
       (all ? '<b>ALL of them!</b> You wonderful wanderer!' : 'well, some of them, I hope."') +
       ' M. polishes their spectacles on an ink-stained sleeve. "The Gulper ate my writing desk. And my hat. <i>Twice.</i>"');
     game.endingT = 0.0001;           // roll the storybook end card
+  } else if (game.hasHat && !game.hatReturned) {
+    game.hatReturned = true;
+    game.floatText(m.x, m.y - 40, '!!');
+    game.burst(m.x, m.y - 20, 12, PALETTE.fx.trinket);
+    game.showDialog('"MY HAT!" M. claps it on, spectacles fogging with joy. "You went down THERE for it? You marvel. You absolute marvel." <span class="hint">M. will write about you. Probably several letters.</span>');
   } else {
     game.showDialog(all
       ? '"Every letter home. The two worlds will be full of new stories by morning &mdash; go wander them." M. waves a tiny claw.'
@@ -1169,7 +1424,7 @@ function updateGulper(e, game, dt) {
   const B = DUNGEON.BOSS;
   const p = game.player;
   const ph = gulperPhase(e);
-  const spd = B.SPEED[ph];
+  const spd = B.SPEED[ph] * (Dungeon.d.bossSpeed || 1);
   if (e.flashT > 0) e.flashT -= dt;
   if (e.squashT > 0) e.squashT -= dt;
   e.bob += dt;
@@ -1845,7 +2100,7 @@ function updateDBlock(e, game, dt) {
 // switch wiring: one mutation point, checked once per tick for the current room
 function checkRoomWiring(game) {
   const room = Dungeon.cur;
-  const wire = SWITCH_WIRES[room.key];
+  const wire = Dungeon.d.wires[room.key];
   if (!wire) return;
   let all = true, any = false;
   for (const e of game.entities) {
@@ -1926,7 +2181,7 @@ function updateDoors(game, dt) {
 /* ---------------- enter / exit / respawn ---------------- */
 
 function dungeonSpawnPos() {
-  const room = Dungeon.rooms.get(DUNGEON.SPAWN_ROOM);
+  const room = Dungeon.rooms.get(Dungeon.d.spawnRoom);
   return {
     x: room.ox + (DUNGEON.SPAWN_TILE[0] + 0.5) * TILE,
     y: room.oy + DUNGEON.SPAWN_TILE[1] * TILE,
@@ -1940,15 +2195,15 @@ function placePlayerInDungeon(game) {
   p.knockX = p.knockY = 0;
   p.attackState = 'none';
   p.dir = 1; // facing up, into the dungeon
-  Dungeon.cur = Dungeon.rooms.get(DUNGEON.SPAWN_ROOM);
-  Dungeon.visited.add(DUNGEON.SPAWN_ROOM);
+  Dungeon.cur = Dungeon.rooms.get(Dungeon.d.spawnRoom);
+  Dungeon.visited.add(Dungeon.d.spawnRoom);
   activateRoom(game, Dungeon.cur);
   const cam = dungeonCamTarget(Dungeon.cur, p);
   game.cam.x = game.cam.px = cam.x;
   game.cam.y = game.cam.py = cam.y;
 }
 
-function enterDungeon(game) {
+function enterDungeon(game, defIdx) {
   if (Dungeon.fade || Dungeon.active) return;
   Dungeon.fade = {
     t: 0, phase: 'out',
@@ -1956,12 +2211,13 @@ function enterDungeon(game) {
       const p = game.player;
       Dungeon.saved = { x: p.x, y: p.y, entities: game.entities };
       game.entities = [];
+      Dungeon.d = Dungeon.defs[defIdx || 0];
       Dungeon.active = true;
       Dungeon.flags.smashed.clear();   // pots regrow between visits
       Dungeon.flags.dead.clear();      // and enemies come back
       for (const r of Dungeon.rooms.values()) { r.clearedThisVisit = false; r.pendingKey = null; }
       placePlayerInDungeon(game);
-      game.showDialog('The Hollow Stump. Somewhere below, a quill is still scratching.');
+      game.showDialog(Dungeon.d.enterDialog);
     },
   };
 }
@@ -1975,7 +2231,7 @@ function exitDungeon(game) {
       game.entities = Dungeon.saved ? Dungeon.saved.entities : [];
       Dungeon.active = false;
       Dungeon.slide = null;
-      const s = World.stumpSpot;
+      const s = Dungeon.d.exitSpot();
       p.x = p.px = (s.tx + 0.5) * TILE;
       p.y = p.py = (s.ty + 1.4) * TILE;
       p.dir = 0;
@@ -1989,12 +2245,19 @@ function exitDungeon(game) {
   };
 }
 
-// overworld trigger entity in the stump doorway
+// overworld trigger entities in the stump / skull doorways
 function updateStumpDoor(e, game, dt) {
   if (Dungeon.leaveCooldown > 0) { Dungeon.leaveCooldown -= dt; return; }
   const p = game.player;
   if (game.deathT !== null || Dungeon.fade) return;
-  if (dist2(p.x, p.y, e.x, e.y) < DUNGEON.ENTER_RADIUS * DUNGEON.ENTER_RADIUS) enterDungeon(game);
+  if (dist2(p.x, p.y, e.x, e.y) < DUNGEON.ENTER_RADIUS * DUNGEON.ENTER_RADIUS) enterDungeon(game, 0);
+}
+
+function updateSkullDoor(e, game, dt) {
+  if (Dungeon.leaveCooldown > 0) return;   // updateStumpDoor owns the countdown
+  const p = game.player;
+  if (game.deathT !== null || Dungeon.fade) return;
+  if (dist2(p.x, p.y, e.x, e.y) < DUNGEON.ENTER_RADIUS * DUNGEON.ENTER_RADIUS) enterDungeon(game, 1);
 }
 
 /* ---------------- camera & slides ---------------- */
@@ -2183,6 +2446,7 @@ function updateDungeonMode(game, dt) {
     else if (e.kind === 'gulper') updateGulper(e, game, dt);
     else if (e.kind === 'glob') updateGlob(e, game, dt);
     else if (e.kind === 'heartContainer') updateHeartContainer(e, game, dt);
+    else if (e.kind === 'hat') updateHat(e, game, dt);
     else if (e.kind === 'mole') e.bobT += dt;
   }
   checkRoomWiring(game);
@@ -2479,6 +2743,11 @@ function drawDungeonEntity(c, e, alpha, ox, oy) {
     c.drawImage(S.mole.c, x - S.mole.ax, y - S.mole.ay + bob);
     return true;
   }
+  if (e.kind === 'hat') {
+    const bob = Math.sin(e.bobT * 2.4) * 3;
+    c.drawImage(S.hat.c, x - S.hat.ax, y - S.hat.ay + bob);
+    return true;
+  }
   if (e.kind === 'heartContainer') {
     const bob = Math.sin(e.bobT * 2.4) * 3;
     c.drawImage(S.heartContainer.c, x - S.heartContainer.ax, y - S.heartContainer.ay + bob);
@@ -2543,7 +2812,7 @@ function drawRoomMapHud(ctx, game, vw) {
     ctx.strokeStyle = F.ink; ctx.lineWidth = 1.6;
     ctx.beginPath(); ctx.roundRect(x, y, cell, cell, 4);
     ctx.fill(); ctx.stroke();
-    if (room.key === DUNGEON.SPAWN_ROOM) {
+    if (room.key === Dungeon.d.spawnRoom) {
       ctx.fillStyle = F.ink;
       ctx.beginPath(); ctx.arc(x + cell / 2, y + cell - 5, 2, 0, Math.PI * 2); ctx.fill();
     }

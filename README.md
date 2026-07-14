@@ -2,7 +2,9 @@
 
 A 2D top-down world-explorer browser game where the art style itself changes with the biome: a flat-vector desert (coral sand, stepped teal oases, barrel cacti, bleached skulls) blends into a hand-drawn storybook forest (wobbly ink outlines, paper grain, ogres, slimes, murky purple ponds).
 
-Beneath the forest waits **the Hollow Stump** — a full GBA-era-Zelda-style dungeon: twelve hand-authored rooms behind a room-locked camera with classic screen-slide transitions, small keys and locked doors, smashable pots, push-block puzzles, floor switches, a combat room that seals its shutters, a one-way ledge, Blossom Bombs that crumble cracked walls in the dungeon *and* the overworld, a boss key, a three-cycle boss with a bomb-hungry inhale, a Heart Container, and the letter-writer M. waiting at the end of it all.
+Beneath the forest waits **the Hollow Stump**, and out in the desert a **Colossus Skull** hides the harder, post-game **Marrow Den** — same rules, meaner rooms, a faster Elder, a fifth heart, and something small and sentimental that M. has been missing.
+
+The first of the two is **the Hollow Stump** — a full GBA-era-Zelda-style dungeon: twelve hand-authored rooms behind a room-locked camera with classic screen-slide transitions, small keys and locked doors, smashable pots, push-block puzzles, floor switches, a combat room that seals its shutters, a one-way ledge, Blossom Bombs that crumble cracked walls in the dungeon *and* the overworld, a boss key, a three-cycle boss with a bomb-hungry inhale, a Heart Container, and the letter-writer M. waiting at the end of it all.
 
 Built from the researched master prompt in [`PROMPT.md`](PROMPT.md); research notes in [`RESEARCH.md`](RESEARCH.md). All graphics are procedural — no image assets, everything is drawn in code onto canvases at load time.
 

@@ -44,6 +44,7 @@ function worldInit(seedInt) {
     });
   }
   World.stumpSpot = findStumpSpot();
+  World.skullSpot = findSkullSpot();
   // cracked boulders: bomb-gated caches, visible from day one ("show the
   // lock before the key"), scattered on dry land around the spawn
   World.boulderSpots = [];
@@ -78,6 +79,26 @@ function findStumpSpot() {
     }
   }
   return { tx: 40, ty: 0 };
+}
+
+// The Colossus Skull (the Marrow Den's entrance): first comfortably-desert,
+// dry spot on a fixed outward search — the bleached twin of the Great Stump.
+function findSkullSpot() {
+  for (let rad = 34; rad <= 150; rad += 4) {
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2 + 0.13;
+      const tx = Math.round(Math.cos(a) * rad), ty = Math.round(Math.sin(a) * rad);
+      if (blendAtTile(tx, ty) > 0.15) continue;
+      let ok = true;
+      for (let dy = -4; ok && dy <= 2; dy++) {
+        for (let dx = -4; ok && dx <= 4; dx++) {
+          if (isWaterTile(tx + dx, ty + dy)) ok = false;
+        }
+      }
+      if (ok) return { tx, ty };
+    }
+  }
+  return { tx: -46, ty: 4 };
 }
 
 // biome blend: 0 = desert, 1 = forest (elevation-style noise, band ~12 tiles)
@@ -144,8 +165,9 @@ function landmarkFeature(lrx, lry) {
   let type = null;
   if (roll < 0.62 && Math.hypot(tx, ty) > 12) {
     const bl = blendAtTile(tx, ty);
-    const s = World.stumpSpot;
-    const nearStump = s && Math.hypot(tx - s.tx, ty - s.ty) < 12;
+    const s = World.stumpSpot, k = World.skullSpot;
+    const nearStump = (s && Math.hypot(tx - s.tx, ty - s.ty) < 12) ||
+                      (k && Math.hypot(tx - k.tx, ty - k.ty) < 12);
     if (!nearStump && !isWaterTile(tx, ty) && !inCampClearing(tx, ty)) {
       if (bl < 0.4) type = pick < 0.42 ? 'rocktrio' : pick < 0.72 ? 'cactusring' : pick < 0.92 ? 'ribcage' : 'greatskull';
       else if (bl > 0.6) type = pick < 0.38 ? 'cairn' : pick < 0.68 ? 'fairyring' : pick < 0.92 ? 'stones' : 'greattree';
@@ -464,6 +486,8 @@ function tileFreeForProp(wtx, wty) {
   if (Math.hypot(wtx, wty) < 6) return false;  // spawn clearing
   const s = World.stumpSpot;
   if (s && Math.hypot(wtx - s.tx, wty - s.ty) < 6) return false; // stump apron
+  const k = World.skullSpot;
+  if (k && Math.hypot(wtx - k.tx, wty - k.ty) < 7) return false; // skull apron
   if (inLandmarkApron(wtx, wty)) return false; // set pieces clear their stage
   if (nearPath(wtx, wty, 1.3)) return false;   // desire paths stay walkable
   return true;
@@ -490,10 +514,16 @@ function genChunk(cx, cy) {
 
   const addProp = (list, variant, wtx, wty, jx, jy, blocking, sway, scale, flip) => {
     const spr = Array.isArray(list) ? list[variant % list.length] : list;
+    const sc = scale || 1;
     chunk.props.push({
       spr, x: (wtx + 0.5) * TILE + jx, y: (wty + 0.5) * TILE + jy,
       sway: sway || 0, phase: (wtx * 7 + wty * 13) % 6.28,
-      s: scale || 1, flip: flip || false,
+      s: sc, flip: flip || false,
+      // true render extents so big/scaled sprites are culled by what they
+      // actually cover on screen, not by a fixed margin around the anchor
+      rx: Math.max(spr.ax, spr.c.width - spr.ax) * sc + 10,
+      top: spr.ay * sc + 10,
+      bot: (spr.c.height - spr.ay) * sc + 10,
     });
     if (blocking) markSolid(chunk, wtx - baseTx, wty - baseTy);
   };
@@ -734,6 +764,21 @@ function genChunk(cx, cy) {
         }
       }
       chunk.entities.push({ kind: 'stumpdoor', tx: s.tx, ty: s.ty });
+    }
+  }
+
+  // the Colossus Skull — the Marrow Den's entrance (mouth stays open)
+  {
+    const k = World.skullSpot;
+    if (k && Math.floor(k.tx / CHUNK) === cx && Math.floor(k.ty / CHUNK) === cy) {
+      addProp(SPRITES.skull, 0, k.tx, k.ty, 0, TILE * 0.4, false, 0, 2.0);
+      for (let dy = -3; dy <= 0; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          if (dx === 0 && dy === 0) continue; // the mouth
+          markSolid(chunk, k.tx + dx - baseTx, k.ty + dy - baseTy);
+        }
+      }
+      chunk.entities.push({ kind: 'skulldoor', tx: k.tx, ty: k.ty });
     }
   }
 

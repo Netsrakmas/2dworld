@@ -58,6 +58,12 @@ const PALETTE = Object.freeze({
     moth: '#9B8AA6',
     snapper: '#8C3B2E',
   }),
+  marrow: Object.freeze({          // the Marrow Den: polished-bone interior
+    floor: '#D8C49E',
+    floorSpeckle: '#C0A878',
+    wall: '#8F7355',
+    wallRim: '#B0916C',
+  }),
   fx: Object.freeze({
     flash: '#FFF6E6',        // enemy hit flash (never pure white)
     heart: '#D9564C',

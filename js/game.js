@@ -287,6 +287,7 @@
       else if (e.kind === 'letter') updateLetter(e, game, dt);
       else if (e.kind === 'pickup') updatePickup(e, game, dt);
       else if (e.kind === 'stumpdoor') updateStumpDoor(e, game, dt);
+      else if (e.kind === 'skulldoor') updateSkullDoor(e, game, dt);
       else if (e.kind === 'bomb') updateBomb(e, game, dt);
     }
     updateBombItem(game, dt);
@@ -420,8 +421,10 @@
       for (let cxi = c0x; cxi <= c1x; cxi++) {
         const ch = getChunk(cxi, cyi);
         for (const pr of ch.props) {
-          if (pr.x < ox - margin || pr.x > ox + vw + margin ||
-              pr.y < oy - margin || pr.y > oy + vh + margin * 1.6) continue;
+          // cull against the sprite's real screen extents (fixes tall/scaled
+          // props popping in late at the top and sides of the screen)
+          if (pr.x + pr.rx < ox || pr.x - pr.rx > ox + vw ||
+              pr.y + pr.bot < oy || pr.y - pr.top > oy + vh) continue;
           drawables.push(pr);
         }
       }
@@ -850,6 +853,20 @@
         ctx.beginPath(); ctx.arc(lx, ly, 3.6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         ctx.fillStyle = PALETTE.dungeon.dark;
         ctx.beginPath(); ctx.arc(lx, ly + 0.8, 1.4, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // the Colossus Skull (Marrow Den entrance)
+    if (World.skullSpot) {
+      const k = World.skullSpot;
+      const kx = mx + size / 2 + (k.tx * TILE - p.x) / (TILE * CELL) * scale;
+      const ky = my + size / 2 + (k.ty * TILE - p.y) / (TILE * CELL) * scale;
+      if (kx >= mx + 5 && kx <= mx + size - 5 && ky >= my + 5 && ky <= my + size - 5) {
+        ctx.fillStyle = PALETTE.desert.bone;
+        ctx.strokeStyle = PALETTE.forest.ink;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc(kx, ky, 3.6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = PALETTE.dungeon.dark;
+        ctx.beginPath(); ctx.arc(kx, ky + 0.8, 1.4, 0, Math.PI * 2); ctx.fill();
       }
     }
     // player
