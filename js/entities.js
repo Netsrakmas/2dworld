@@ -28,6 +28,7 @@ function makePlayer() {
     stepAcc: 0,
     // combat
     hp: COMBAT.MAX_HP,
+    maxHp: COMBAT.MAX_HP,      // heart containers raise this
     iFrameT: 0, hurtLockT: 0,
     attackState: 'none', attackT: 0, attackAngle: 0,
     attackCooldownT: 0, attackBuffer: 0,

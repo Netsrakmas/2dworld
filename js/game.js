@@ -184,6 +184,7 @@
     let iy = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
     if (game.touch.active) { ix += game.touch.dx; iy += game.touch.dy; }
     if (game.deathT !== null || p.hurtLockT > 0) { ix = 0; iy = 0; }
+    if (game.endingT && game.endingT < 3.5) { ix = 0; iy = 0; }   // hold still for the bow
     return { ix, iy };
   }
 
@@ -209,7 +210,7 @@
         p.y = p.py = TILE * 0.5;
         game.cam.x = game.cam.px = p.x;
         game.cam.y = game.cam.py = p.y;
-        p.hp = COMBAT.MAX_HP;
+        p.hp = p.maxHp;
         p.iFrameT = COMBAT.IFRAMES;
         p.knockX = p.knockY = 0;
         p.attackState = 'none';
@@ -287,6 +288,7 @@
       else if (e.kind === 'bomb') updateBomb(e, game, dt);
     }
     updateBombItem(game, dt);
+    updateEndingCard(game, dt);
     for (let i = game.rings.length - 1; i >= 0; i--) {
       game.rings[i].t += dt;
       if (game.rings[i].t > 0.35) game.rings.splice(i, 1);
@@ -488,6 +490,7 @@
       ctx.fillRect(0, 0, vw, vh);
     }
 
+    drawEndingCard(ctx, game, vw, vh);
     drawDungeonFade(ctx, vw, vh);
   }
 
@@ -564,7 +567,7 @@
   function drawHearts() {
     const p = game.player;
     const size = 26, spacing = 32, x0 = 30, y0 = 172;
-    for (let i = 0; i < COMBAT.MAX_HP / 2; i++) {
+    for (let i = 0; i < (p.maxHp || COMBAT.MAX_HP) / 2; i++) {
       const x = x0 + i * spacing;
       ctx.fillStyle = PALETTE.forest.cream;
       ctx.strokeStyle = PALETTE.forest.ink;

@@ -314,7 +314,7 @@ function updatePickup(e, game, dt) {
   e.y += e.vy * dt;
   if (d < 15 && e.age > 0.15) {
     if (e.ptype === 'heart') {
-      p.hp = Math.min(COMBAT.MAX_HP, p.hp + COMBAT.HEART_HEAL);
+      p.hp = Math.min(p.maxHp || COMBAT.MAX_HP, p.hp + COMBAT.HEART_HEAL);
       game.floatText(p.x, p.y - 40, '+1 heart');
     } else if (e.ptype === 'bloom') {
       if (game.bombs) game.bombs.count = Math.min(game.bombs.cap, game.bombs.count + 1);

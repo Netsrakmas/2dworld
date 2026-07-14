@@ -43,6 +43,23 @@ const DUNGEON = Object.freeze({
   // the item (pass 4): Blossom Bombs
   BOMB: Object.freeze({ THROW_T: 0.35, DIST: 100, ARC: 22, FUSE: 1.2, BLINK_LATE: 0.4,
     RADIUS: 70, DMG: 2, SELF_DMG: 1, CD: 0.35, REGROW: 8, CRACK_RADIUS: 95, CAP: 3 }),
+  // the boss (pass 5): the Great Gulper — 3-cycle vulnerability loop
+  BOSS: Object.freeze({
+    HP: 9,                          // 3 stun windows x 3 staff hits
+    RADIUS: 36,
+    HOPS: Object.freeze([3, 4, 4]), // hop-slams per cycle
+    GLOBS: Object.freeze([3, 3, 5]),
+    SPEED: Object.freeze([1, 1.2, 1.4]),
+    HOP_TELEGRAPH: 0.6,             // shadow shown where it will land
+    HOP_AIR: 0.45,
+    SLAM_RADIUS: 55, SLAM_DMG: 2,   // a full heart in the zone
+    GLOB_SPEED: 140, GLOB_DMG: 1, VOLLEY_GAP: 0.35,
+    PUFF_T: 0.8,                    // cheeks puff — the readable opening
+    INHALE_T: 2.5, PULL: 90,        // drags the player mouthward
+    GULP_R: 30, SUCK_R: 200,        // bombs get vacuumed within SUCK_R
+    STUN_T: 3.0,                    // the only hittable window
+    INTRO_T: 1.4, IDLE_T: 0.7, DIE_T: 2.0,
+  }),
 });
 
 const Dungeon = {
@@ -61,8 +78,10 @@ const Dungeon = {
   spr: {},                         // baked interactable sprites
   // session-long flags: chests stay open forever, latched switches stay
   // latched; smashed pots regrow and enemies respawn when re-entering
-  flags: { smashed: new Set(), latched: new Set(), chests: new Set(), keysTaken: new Set(), dead: new Set() },
+  flags: { smashed: new Set(), latched: new Set(), chests: new Set(), keysTaken: new Set(), dead: new Set(),
+           bossDefeated: false, heartTaken: false, metM: false },
   combatLock: null,                // { room, armT } while a combat room is sealing/sealed
+  inhaling: null,                  // the boss, while it vacuums (bombs home in on it)
 };
 
 // what each chest holds, by room
@@ -759,6 +778,125 @@ function bakeDungeonProps(seedInt) {
     });
   }
 
+  // --- the Great Gulper + finale cast ---
+  S.gulper = {};
+  for (const mode of ['idle0', 'idle1', 'puff', 'inhale', 'stun']) {
+    const R = mulberry32(seedInt ^ hash2i(mode.length, mode.charCodeAt(0), 0x601));
+    S.gulper[mode] = sprite(130, 110, 65, 100, (ctx) => {
+      blobShadow(ctx, 65, 100, 42, 10);
+      const G = PALETTE.forest;
+      const bodyLift = mode === 'idle1' ? 3 : 0;
+      // great round body
+      Sketch.blob(ctx, [
+        [18, 88], [8, 58], [20, 26], [45, 10 + bodyLift], [85, 10 + bodyLift],
+        [110, 26], [122, 58], [112, 88], [65, 98],
+      ], R, { fill: G.slime, stroke: G.ink, lineWidth: 3, rough: 2.4 });
+      // darker back mottles
+      ctx.fillStyle = withAlpha(PALETTE.forest.slimeDark, 0.8);
+      for (const [mx, my, mr] of [[40, 26, 7], [72, 20, 9], [98, 34, 6], [26, 44, 5]]) {
+        ctx.beginPath(); ctx.arc(mx, my + bodyLift, mr, 0, Math.PI * 2); ctx.fill();
+      }
+      // cream belly
+      Sketch.ellipse(ctx, 65, 74, 34, 20, R, { fill: G.cream, stroke: G.ink, lineWidth: 2.2, rough: 1.6 });
+      // stubby feet
+      for (const side of [-1, 1]) {
+        Sketch.ellipse(ctx, 65 + side * 42, 92, 12, 7, R, { fill: G.slime, stroke: G.ink, lineWidth: 2.2, rough: 1.2 });
+      }
+      // face by mode
+      ctx.strokeStyle = G.ink; ctx.lineWidth = 2.6;
+      if (mode === 'inhale') {
+        // huge hungry mouth
+        ctx.fillStyle = PALETTE.dungeon.dark;
+        Sketch.ellipse(ctx, 65, 52, 26, 18, R, { fill: PALETTE.dungeon.dark, stroke: G.ink, lineWidth: 3, rough: 1.6 });
+        ctx.beginPath(); ctx.arc(44, 30, 4, 0, Math.PI * 2); ctx.stroke();   // strained eyes
+        ctx.beginPath(); ctx.arc(86, 30, 4, 0, Math.PI * 2); ctx.stroke();
+      } else if (mode === 'puff') {
+        // cheeks ballooning: the readable opening
+        for (const side of [-1, 1]) {
+          Sketch.ellipse(ctx, 65 + side * 34, 44, 16, 14, R, { fill: shade(PALETTE.forest.slime, 1.12), stroke: G.ink, lineWidth: 2.4, rough: 1.4 });
+        }
+        ctx.beginPath(); ctx.moveTo(40, 28); ctx.lineTo(50, 30); ctx.stroke(); // squeezed-shut eyes
+        ctx.beginPath(); ctx.moveTo(90, 28); ctx.lineTo(80, 30); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(58, 52); ctx.lineTo(72, 52); ctx.stroke();
+      } else if (mode === 'stun') {
+        // dizzy swirls + flopped tongue
+        for (const side of [-1, 1]) {
+          ctx.beginPath();
+          ctx.arc(65 + side * 21, 30, 4.5, 0, Math.PI * 1.6);
+          ctx.arc(65 + side * 21, 30, 2.2, Math.PI * 1.6, Math.PI * 3);
+          ctx.stroke();
+        }
+        ctx.fillStyle = PALETTE.fx.heart;
+        ctx.beginPath(); ctx.roundRect(56, 50, 18, 12, 6); ctx.fill(); ctx.stroke();
+      } else {
+        // sleepy contentment
+        ctx.beginPath(); ctx.arc(44, 30, 3.4, 0, Math.PI * 2);
+        ctx.arc(86, 30, 3.4, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = G.ink;
+        ctx.beginPath(); ctx.arc(65, 50, 5, 0.15, Math.PI - 0.15); ctx.stroke();
+      }
+    });
+  }
+
+  {
+    const R = mulberry32(seedInt ^ 0x1301E);
+    S.mole = sprite(42, 46, 21, 42, (ctx) => {
+      blobShadow(ctx, 21, 42, 13, 4);
+      const G = PALETTE.forest;
+      // round velvet body
+      Sketch.blob(ctx, [[8, 36], [6, 20], [14, 8], [28, 8], [36, 20], [34, 36], [21, 40]], R,
+        { fill: G.hoodDark, stroke: G.ink, lineWidth: 2.4, rough: 1.6 });
+      // satchel strap + satchel
+      ctx.strokeStyle = G.ink; ctx.lineWidth = 2;
+      Sketch.line(ctx, 10, 16, 32, 30, R, { rough: 1.2, passes: 1 });
+      ctx.fillStyle = G.woodLight;
+      ctx.beginPath(); ctx.roundRect(26, 28, 12, 9, 3); ctx.fill(); ctx.stroke();
+      // pink nose + spectacles
+      ctx.fillStyle = PALETTE.desert.blossomLight;
+      ctx.beginPath(); ctx.arc(21, 22, 3.6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = G.ink; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.arc(15, 16, 4.4, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(27, 16, 4.4, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(19.4, 16); ctx.lineTo(22.6, 16); ctx.stroke();
+      // ink-stained paws
+      ctx.fillStyle = shade(PALETTE.forest.hoodDark, 0.7);
+      ctx.beginPath(); ctx.ellipse(12, 34, 4, 3, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(30, 34, 4, 3, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    });
+  }
+
+  {
+    const R = mulberry32(seedInt ^ 0x4EA27);
+    S.heartContainer = sprite(44, 44, 22, 38, (ctx) => {
+      blobShadow(ctx, 22, 38, 13, 4);
+      // a ring of tiny petals frames the big heart
+      ctx.fillStyle = PALETTE.desert.blossomLight;
+      ctx.strokeStyle = PALETTE.forest.ink; ctx.lineWidth = 1.4;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.ellipse(22 + Math.cos(a) * 16, 20 + Math.sin(a) * 15, 4, 2.8, a, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+      }
+      ctx.fillStyle = PALETTE.fx.heart;
+      ctx.strokeStyle = PALETTE.forest.ink; ctx.lineWidth = 2.4;
+      heartPath(ctx, 22, 20, 26);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = PALETTE.fx.flash;
+      ctx.beginPath(); ctx.arc(16, 13, 3, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  {
+    const R = mulberry32(seedInt ^ 0x610B);
+    S.glob = sprite(18, 16, 9, 11, (ctx) => {
+      Sketch.blob(ctx, [[3, 10], [4, 4], [9, 2], [14, 4], [15, 10], [9, 13]], R,
+        { fill: PALETTE.forest.slime, stroke: PALETTE.forest.ink, lineWidth: 1.8, rough: 1 });
+      ctx.fillStyle = PALETTE.fx.flash;
+      ctx.beginPath(); ctx.arc(6, 5, 1.6, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
   {
     // cracked boulder (overworld bomb-gated cache)
     const R = mulberry32(seedInt ^ 0xB01D);
@@ -853,12 +991,44 @@ function activateRoom(game, room) {
       const e = spawnDungeonEnemy(sp.ch, id, wx, wy, room);
       game.entities.push(e);
       if (sp.ch !== 'x') hasEnemies = true;
+    } else if (sp.ch === 'X') {
+      if (!Dungeon.flags.bossDefeated) {
+        game.entities.push(makeGulper(wx, wy, room));
+        Dungeon.combatLock = { room, armT: DUNGEON.SHUTTER_ARM, sealed: false, boss: true };
+      } else {
+        spawnArenaAftermath(game, room, wx, wy);
+      }
     }
-    // the boss char (X) spawns in pass 5
   }
   // combat room: seal the doors shortly after entry until it is cleared
   if (room.key === '3,2' && hasEnemies) {
     Dungeon.combatLock = { room, armT: DUNGEON.SHUTTER_ARM, sealed: false };
+  }
+}
+
+// after the fight: M. waits by the arena, plus the heart container if untaken
+function spawnArenaAftermath(game, room, wx, wy) {
+  if (!Dungeon.flags.heartTaken) {
+    game.entities.push({ kind: 'heartContainer', x: wx, y: wy - TILE, px: wx, py: wy - TILE, bobT: 0 });
+  }
+  const my = wy + TILE * 1.2;
+  const m = { kind: 'mole', x: wx, y: my, px: wx, py: my, bobT: Math.random() * 6 };
+  m.interact = { label: 'talk', action: () => talkToM(game, m) };
+  game.entities.push(m);
+}
+
+function talkToM(game, m) {
+  const all = game.collected.size === 5;
+  if (!Dungeon.flags.metM) {
+    Dungeon.flags.metM = true;
+    game.showDialog('"You found me! And my letters&mdash;' +
+      (all ? '<b>ALL of them!</b> You wonderful wanderer!' : 'well, some of them, I hope."') +
+      ' M. polishes their spectacles on an ink-stained sleeve. "The Gulper ate my writing desk. And my hat. <i>Twice.</i>"');
+    game.endingT = 0.0001;           // roll the storybook end card
+  } else {
+    game.showDialog(all
+      ? '"Every letter home. The two worlds will be full of new stories by morning &mdash; go wander them." M. waves a tiny claw.'
+      : '"' + (5 - game.collected.size) + ' of my letters are still out there somewhere. Do give them a read if you trip over one."');
   }
 }
 
@@ -961,6 +1131,259 @@ function checkRoomCleared(game) {
   }
 }
 
+/* --- the Great Gulper (pass 5) --- */
+
+function gulperPhase(b) { return b.hp > 6 ? 0 : b.hp > 3 ? 1 : 2; }
+
+function makeGulper(wx, wy, room) {
+  return {
+    kind: 'gulper', room,
+    x: wx, y: wy, px: wx, py: wy, homeX: wx, homeY: wy,
+    hp: DUNGEON.BOSS.HP, radius: DUNGEON.BOSS.RADIUS,
+    hittable: true, flashT: 0, squashT: 0, staggerT: 0, dazedT: 0, kbx: 0, kby: 0,
+    st: 'intro', t: DUNGEON.BOSS.INTRO_T,
+    hopN: 0, globN: 0, z: 0, bob: Math.random() * 6,
+    hopFromX: 0, hopFromY: 0, hopToX: wx, hopToY: wy,
+    onStaffHit: (game, b, finisher) => {
+      if (b.st !== 'stunned') {
+        game.floatText(b.x, b.y - 66, 'tink!');
+        game.burst(b.x, b.y - 30, 4, PALETTE.fx.flash);
+        game.freeze(0.03);
+        return;
+      }
+      b.hp -= finisher ? 2 : 1;      // the combo finisher counts double
+      b.flashT = COMBAT.FLASH_TIME;
+      b.squashT = COMBAT.SQUASH_TIME;
+      game.freeze(finisher ? COMBAT.HITSTOP_KILL : COMBAT.HITSTOP);
+      game.burst(b.x, b.y - 30, finisher ? 12 : 8, PALETTE.fx.flash);
+      game.shake(0.1, 0.008);
+      if (b.hp <= 0) {
+        b.st = 'dying'; b.t = DUNGEON.BOSS.DIE_T; b.dieAcc = 0;
+        Dungeon.inhaling = null;
+      }
+    },
+  };
+}
+
+function updateGulper(e, game, dt) {
+  const B = DUNGEON.BOSS;
+  const p = game.player;
+  const ph = gulperPhase(e);
+  const spd = B.SPEED[ph];
+  if (e.flashT > 0) e.flashT -= dt;
+  if (e.squashT > 0) e.squashT -= dt;
+  e.bob += dt;
+  e.t -= dt * (e.st === 'stunned' || e.st === 'intro' || e.st === 'dying' ? 1 : 1);
+
+  const room = e.room;
+  const clampX = (x) => clamp(x, room.ox + TILE * 2, room.ox + ROOM_PX_W - TILE * 2);
+  const clampY = (y) => clamp(y, room.oy + TILE * 2, room.oy + ROOM_PX_H - TILE * 2);
+
+  if (e.st === 'intro') {
+    if (e.t <= 0) {
+      game.showDialog('<b>The GREAT GULPER</b> blinks awake. Its tummy rumbles like a landslide.<span class="hint">Its hide shrugs off the staff... but that inhale looks hungry for a Blossom Bomb.</span>');
+      game.shake(0.25, 0.014);
+      e.st = 'idle'; e.t = B.IDLE_T;
+    }
+  } else if (e.st === 'idle') {
+    if (e.t <= 0) {
+      e.st = 'hopTele'; e.t = B.HOP_TELEGRAPH / spd; e.hopN = 0;
+      e.hopToX = clampX(p.x); e.hopToY = clampY(p.y);
+    }
+  } else if (e.st === 'hopTele') {
+    if (e.t <= 0) {
+      e.st = 'hopAir'; e.t = B.HOP_AIR / spd;
+      e.hopFromX = e.x; e.hopFromY = e.y;
+    }
+  } else if (e.st === 'hopAir') {
+    const u = clamp(1 - e.t / (B.HOP_AIR / spd), 0, 1);
+    e.x = lerp(e.hopFromX, e.hopToX, u);
+    e.y = lerp(e.hopFromY, e.hopToY, u);
+    e.z = Math.sin(Math.PI * u) * 70;
+    if (e.t <= 0) {
+      e.z = 0;
+      game.ring(e.x, e.y);
+      game.shake(0.14, 0.012);
+      if (dist2(p.x, p.y, e.x, e.y) < (B.SLAM_RADIUS + p.radius) ** 2) {
+        damagePlayer(game, B.SLAM_DMG, e.x, e.y);
+      }
+      e.hopN++;
+      if (e.hopN < B.HOPS[ph]) {
+        e.st = 'hopTele'; e.t = B.HOP_TELEGRAPH / spd;
+        e.hopToX = clampX(p.x); e.hopToY = clampY(p.y);
+      } else {
+        e.st = 'volley'; e.t = B.VOLLEY_GAP / spd; e.globN = 0;
+      }
+    }
+  } else if (e.st === 'volley') {
+    if (e.t <= 0) {
+      const ang = Math.atan2(p.y - e.y, p.x - e.x);
+      game.entities.push({
+        kind: 'glob', age: 0,
+        x: e.x + Math.cos(ang) * 24, y: e.y - 18 + Math.sin(ang) * 24,
+        px: e.x, py: e.y,
+        vx: Math.cos(ang) * B.GLOB_SPEED * spd, vy: Math.sin(ang) * B.GLOB_SPEED * spd,
+      });
+      e.globN++;
+      e.t = B.VOLLEY_GAP / spd;
+      if (e.globN >= B.GLOBS[ph]) { e.st = 'puff'; e.t = B.PUFF_T; }
+    }
+  } else if (e.st === 'puff') {
+    if (e.t <= 0) {
+      e.st = 'inhale'; e.t = B.INHALE_T;
+      Dungeon.inhaling = e;
+    }
+  } else if (e.st === 'inhale') {
+    // the vacuum: player dragged mouthward, dust streams in
+    if (game.deathT === null) {
+      const dx = e.x - p.x, dy = (e.y - 14) - p.y;
+      const d = Math.hypot(dx, dy) || 1;
+      p.x += (dx / d) * B.PULL * spd * dt;
+      p.y += (dy / d) * B.PULL * spd * dt;
+    }
+    if (((e.t * 20) | 0) % 3 === 0) {
+      const a = Math.random() * Math.PI * 2, r = 90 + Math.random() * 60;
+      const sx = e.x + Math.cos(a) * r, sy = e.y - 14 + Math.sin(a) * r;
+      emitParticle(game.particles, sx, sy, (e.x - sx) * 2.2, (e.y - 14 - sy) * 2.2,
+        0.4, 2, PALETTE.dungeon.floorSpeckle);
+    }
+    if (e.t <= 0) { Dungeon.inhaling = null; e.st = 'idle'; e.t = B.IDLE_T; }
+  } else if (e.st === 'stunned') {
+    if (e.t <= 0) { e.st = 'idle'; e.t = B.IDLE_T; }
+  } else if (e.st === 'dying') {
+    e.dieAcc += dt;
+    if (e.dieAcc > 0.16) {
+      e.dieAcc = 0;
+      const a = Math.random() * Math.PI * 2, r = Math.random() * 30;
+      game.burst(e.x + Math.cos(a) * r, e.y - 24 + Math.sin(a) * r, 6,
+        Math.random() < 0.5 ? PALETTE.forest.canopyMid : PALETTE.fx.flash);
+      game.shake(0.1, 0.008 + (1 - e.t / DUNGEON.BOSS.DIE_T) * 0.008);
+    }
+    if (e.t <= 0) {
+      Dungeon.flags.bossDefeated = true;
+      releaseShutters(game, false);
+      // the arena unseals no matter how the player got in
+      for (const d of e.room.doors) {
+        if (d.door.state === 'closed') d.door.opening = true;
+      }
+      game.burst(e.x, e.y - 20, 20, PALETTE.forest.canopyMid);
+      game.burst(e.x, e.y - 20, 14, PALETTE.desert.blossom);
+      game.shake(0.3, 0.016);
+      game.showDialog('With a tremendous <b>BURP</b>, the Great Gulper shrinks three sizes, looks deeply embarrassed, and hops away down a root-hole. Something glitters where it sat.');
+      spawnArenaAftermath(game, e.room, e.homeX, e.homeY);
+      game.removeEntity(e);
+      return;
+    }
+  }
+
+  // a bumbling boss still bumps: gentle contact damage (never while stunned)
+  if (e.st !== 'stunned' && e.st !== 'dying' && e.z < 20 &&
+      dist2(e.x, e.y, p.x, p.y) < (e.radius + p.radius) ** 2) {
+    damagePlayer(game, 1, e.x, e.y);
+  }
+}
+
+// a swallowed bomb pops inside: the one opening
+function gulpBomb(game, bombEnt, boss) {
+  game.removeEntity(bombEnt);
+  Dungeon.inhaling = null;
+  boss.st = 'stunned';
+  boss.t = DUNGEON.BOSS.STUN_T;
+  boss.flashT = COMBAT.FLASH_TIME;
+  game.freeze(COMBAT.HITSTOP_KILL);
+  game.shake(0.2, 0.014);
+  game.burst(boss.x - 26, boss.y - 44, 8, PALETTE.desert.blossom);   // petals from the ears
+  game.burst(boss.x + 26, boss.y - 44, 8, PALETTE.desert.blossom);
+  game.floatText(boss.x, boss.y - 70, 'pomf!');
+  game.floatText(boss.x, boss.y - 92, 'NOW! bonk it!');
+}
+
+function updateGlob(e, game, dt) {
+  e.age += dt;
+  e.x += e.vx * dt; e.y += e.vy * dt;
+  const p = game.player;
+  if (dist2(e.x, e.y, p.x, p.y) < (9 + p.radius) ** 2) {
+    damagePlayer(game, DUNGEON.BOSS.GLOB_DMG, e.x - e.vx, e.y - e.vy);
+    game.removeEntity(e);
+    return;
+  }
+  if (e.age > 4 || isSolidAt(e.x, e.y)) {
+    game.burst(e.x, e.y, 4, PALETTE.forest.slime);
+    game.removeEntity(e);
+  }
+}
+
+function updateHeartContainer(e, game, dt) {
+  e.bobT += dt;
+  const p = game.player;
+  if (dist2(p.x, p.y, e.x, e.y) < 26 * 26) {
+    Dungeon.flags.heartTaken = true;
+    p.maxHp += 2;
+    p.hp = p.maxHp;
+    game.burst(e.x, e.y - 10, 16, PALETTE.fx.heart);
+    game.burst(e.x, e.y - 10, 10, PALETTE.fx.flash);
+    game.floatText(e.x, e.y - 36, 'a whole new heart!');
+    game.shake(0.12, 0.008);
+    game.showDialog('A <b>Heart Container</b>! Your chest feels roomier. Warmer, too.');
+    game.removeEntity(e);
+  }
+}
+
+// the storybook end card, rolled after first talking to M.
+function updateEndingCard(game, dt) {
+  if (!game.endingT) return;
+  game.endingT += dt;
+  if (game.endingT > 10) game.endingT = null;
+}
+
+function drawEndingCard(ctx, game, vw, vh) {
+  if (!game.endingT) return;
+  const t = game.endingT;
+  const a = t < 0.6 ? t / 0.6 : t > 8.5 ? clamp(1 - (t - 8.5) / 1.5, 0, 1) : 1;
+  if (a <= 0) return;
+  const F = PALETTE.forest;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.fillStyle = withAlpha(PALETTE.dungeon.dark, 0.35);
+  ctx.fillRect(0, 0, vw, vh);
+  const cw = Math.min(470, vw - 40), chh = 240;
+  ctx.translate(vw / 2, vh / 2 - 20);
+  ctx.rotate(0.012);
+  ctx.fillStyle = F.cream;
+  ctx.strokeStyle = F.ink;
+  ctx.lineWidth = 3.5;
+  ctx.beginPath(); ctx.roundRect(-cw / 2, -chh / 2, cw, chh, 16);
+  ctx.fill(); ctx.stroke();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const title = 'The  End';
+  ctx.font = `bold ${Math.min(56, cw / 7)}px Georgia, serif`;
+  ctx.fillStyle = F.ink;
+  const jr = mulberry32(0x7E7E);
+  let tw = ctx.measureText(title).width, x = -tw / 2;
+  for (const g of title) {
+    const w = ctx.measureText(g).width;
+    ctx.save();
+    ctx.translate(x + w / 2, -52 + (jr() - 0.5) * 6);
+    ctx.rotate((jr() - 0.5) * 0.1);
+    ctx.fillText(g, 0, 0);
+    ctx.restore();
+    x += w;
+  }
+  ctx.font = 'italic 18px Georgia, serif';
+  ctx.fillStyle = withAlpha(F.ink, 0.8);
+  ctx.fillText('...the worlds keep wandering', 0, -6);
+  ctx.font = '16px Georgia, serif';
+  ctx.fillStyle = F.ink;
+  const p = game.player;
+  ctx.fillText(`✉ ${game.collected.size} / 5 letters found`, 0, 38);
+  ctx.fillText(`✦ ${game.trinkets} trinkets  ·  ❤ ${p.maxHp / 2} hearts`, 0, 64);
+  ctx.font = 'italic 14px Georgia, serif';
+  ctx.fillStyle = withAlpha(F.ink, 0.6);
+  ctx.fillText('M. and the Hollow Stump thank you', 0, 96);
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
 /* --- Blossom Bombs (pass 4) --- */
 
 function throwBomb(game) {
@@ -1006,6 +1429,19 @@ function updateBomb(e, game, dt) {
   const u = clamp(e.age / DUNGEON.BOMB.THROW_T, 0, 1);
   e.x = lerp(e.sx, e.tx, u);
   e.y = lerp(e.sy, e.ty, u) - Math.sin(Math.PI * u) * DUNGEON.BOMB.ARC;
+  // the Gulper's inhale vacuums loose bombs straight into its mouth
+  if (Dungeon.inhaling) {
+    const b = Dungeon.inhaling;
+    const mx = b.x, my = b.y - 14;
+    const d = Math.hypot(mx - e.x, my - e.y);
+    if (d < DUNGEON.BOSS.GULP_R) { gulpBomb(game, e, b); return; }
+    if (d < DUNGEON.BOSS.SUCK_R) {
+      const pull = 300 * dt;
+      e.x += ((mx - e.x) / d) * pull;
+      e.y += ((my - e.y) / d) * pull;
+      e.tx = e.x; e.ty = e.y; e.sx = e.x; e.sy = e.y;   // suction overrides the throw arc
+    }
+  }
   if (e.age >= DUNGEON.BOMB.FUSE) explodeBomb(game, e);
 }
 
@@ -1744,6 +2180,10 @@ function updateDungeonMode(game, dt) {
     else if (e.kind === 'gloomwing') updateGloomwing(e, game, dt);
     else if (e.kind === 'snapper') updateSnapper(e, game, dt);
     else if (e.kind === 'bomb') updateBomb(e, game, dt);
+    else if (e.kind === 'gulper') updateGulper(e, game, dt);
+    else if (e.kind === 'glob') updateGlob(e, game, dt);
+    else if (e.kind === 'heartContainer') updateHeartContainer(e, game, dt);
+    else if (e.kind === 'mole') e.bobT += dt;
   }
   checkRoomWiring(game);
   updateBombItem(game, dt);
@@ -1769,6 +2209,7 @@ function updateDungeonAmbient(game, dt) {
     game.rings[i].t += dt;
     if (game.rings[i].t > 0.35) game.rings.splice(i, 1);
   }
+  updateEndingCard(game, dt);
 }
 
 /* ---------------- rendering ---------------- */
@@ -1907,6 +2348,8 @@ function renderDungeon(ctx, game, alpha, vw, vh) {
   drawBloomButton(ctx, game);
   if (game.touch.active) game.draw.joystick();
 
+  drawEndingCard(ctx, game, vw, vh);
+
   if (game.deathT !== null) {
     const half = COMBAT.DEATH_FADE;
     const a = game.deathT < half ? game.deathT / half : 1 - (game.deathT - half) / half;
@@ -1996,6 +2439,56 @@ function drawDungeonEntity(c, e, alpha, ox, oy) {
     return true;
   }
   if (e.kind === 'bomb') { drawBombEntity(c, e, x, y); return true; }
+  if (e.kind === 'gulper') {
+    // landing-shadow telegraph while it hangs in the air
+    if (e.st === 'hopTele' || e.st === 'hopAir') {
+      c.fillStyle = withAlpha(PALETTE.forest.ink, 0.16 + 0.06 * Math.sin(e.bob * 12));
+      c.beginPath();
+      c.ellipse(e.hopToX - (e.x - (x)), e.hopToY - (e.y - (y)), DUNGEON.BOSS.SLAM_RADIUS, DUNGEON.BOSS.SLAM_RADIUS * 0.7, 0, 0, Math.PI * 2);
+      c.fill();
+    }
+    const mode = e.st === 'puff' ? 'puff' : e.st === 'inhale' ? 'inhale' :
+      e.st === 'stunned' ? 'stun' : ((e.bob * 2) | 0) % 2 ? 'idle1' : 'idle0';
+    const spr = S.gulper[mode];
+    const img = e.flashT > 0 ? flashOf(spr) : spr.c;
+    const k = e.squashT > 0 ? clamp(e.squashT / COMBAT.SQUASH_TIME, 0, 1) : 0;
+    c.save();
+    c.translate(x, y - e.z);
+    const breathe = 1 + Math.sin(e.bob * 2.4) * 0.02;
+    c.scale((1 + 0.2 * k) * breathe, (1 - 0.2 * k) * (2 - breathe));
+    c.drawImage(img, -spr.ax, -spr.ay);
+    c.restore();
+    if (e.st === 'stunned') {
+      for (let i = 0; i < 3; i++) {
+        const a = e.bob * 6 + (i * Math.PI * 2) / 3;
+        c.fillStyle = PALETTE.fx.trinket;
+        c.strokeStyle = PALETTE.forest.ink;
+        c.lineWidth = 1.2;
+        starPath(c, x + Math.cos(a) * 30, y - e.z - spr.ay + 6 + Math.sin(a) * 8, 6, 4);
+        c.fill(); c.stroke();
+      }
+    }
+    return true;
+  }
+  if (e.kind === 'glob') {
+    c.drawImage(S.glob.c, x - S.glob.ax, y - S.glob.ay);
+    return true;
+  }
+  if (e.kind === 'mole') {
+    const bob = Math.sin(e.bobT * 2.2) * 1.5;
+    c.drawImage(S.mole.c, x - S.mole.ax, y - S.mole.ay + bob);
+    return true;
+  }
+  if (e.kind === 'heartContainer') {
+    const bob = Math.sin(e.bobT * 2.4) * 3;
+    c.drawImage(S.heartContainer.c, x - S.heartContainer.ax, y - S.heartContainer.ay + bob);
+    if (((e.bobT * 6) | 0) % 3 === 0) {
+      c.fillStyle = PALETTE.fx.flash;
+      starPath(c, x + Math.sin(e.bobT * 3.1) * 16, y - 34 + bob, 3.4, 4);
+      c.fill();
+    }
+    return true;
+  }
   return false;
 }
 
