@@ -45,6 +45,19 @@ const PALETTE = Object.freeze({
     firefly: '#F2E08A',
     watcher: '#4A3757',
   }),
+  dungeon: Object.freeze({
+    floor: '#C7A76F',
+    floorSpeckle: '#B08F5A',
+    wall: '#6B4E33',
+    wallRim: '#8A6642',
+    dark: '#2E2118',           // doorways, pits, vignette — the darkest value allowed
+    torchFlame: '#E8A13C',
+    torchGlow: '#F2C063',
+    keyGold: '#E3B341',
+    iron: '#7B6B57',
+    moth: '#9B8AA6',
+    snapper: '#8C3B2E',
+  }),
   fx: Object.freeze({
     flash: '#FFF6E6',        // enemy hit flash (never pure white)
     heart: '#D9564C',

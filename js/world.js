@@ -34,6 +34,28 @@ function worldInit(seedInt) {
       idx: i,
     });
   }
+  World.stumpSpot = findStumpSpot();
+}
+
+// The Great Stump (dungeon entrance): the first comfortably-forest, dry spot
+// found by a fixed outward search from spawn — pure function of the noise, so
+// the same seed always grows the stump in the same place.
+function findStumpSpot() {
+  for (let rad = 30; rad <= 140; rad += 4) {
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      const tx = Math.round(Math.cos(a) * rad), ty = Math.round(Math.sin(a) * rad);
+      if (blendAtTile(tx, ty) < 0.8) continue;
+      let ok = true;
+      for (let dy = -4; ok && dy <= 2; dy++) {
+        for (let dx = -3; ok && dx <= 3; dx++) {
+          if (isWaterTile(tx + dx, ty + dy)) ok = false;
+        }
+      }
+      if (ok && !inCampClearing(tx, ty)) return { tx, ty };
+    }
+  }
+  return { tx: 40, ty: 0 };
 }
 
 // biome blend: 0 = desert, 1 = forest (elevation-style noise, band ~12 tiles)
@@ -273,6 +295,8 @@ function markSolid(chunk, tx, ty) {
 function tileFreeForProp(wtx, wty) {
   if (isWaterTile(wtx, wty)) return false;
   if (Math.hypot(wtx, wty) < 6) return false;  // spawn clearing
+  const s = World.stumpSpot;
+  if (s && Math.hypot(wtx - s.tx, wty - s.ty) < 6) return false; // stump apron
   return true;
 }
 
@@ -396,6 +420,21 @@ function genChunk(cx, cy) {
     }
   }
 
+  // the Great Stump — dungeon entrance landmark (doorway tile stays open)
+  {
+    const s = World.stumpSpot;
+    if (s && Math.floor(s.tx / CHUNK) === cx && Math.floor(s.ty / CHUNK) === cy) {
+      addProp(SPRITES.stump, 0, s.tx, s.ty, 0, TILE * 0.35, false);
+      for (let dy = -3; dy <= 0; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          if (dx === 0 && dy === 0) continue; // the doorway
+          markSolid(chunk, s.tx + dx - baseTx, s.ty + dy - baseTy);
+        }
+      }
+      chunk.entities.push({ kind: 'stumpdoor', tx: s.tx, ty: s.ty });
+    }
+  }
+
   // lost letters
   for (const spot of World.letterSpots) {
     const stx = Math.floor(spot.tx / CHUNK), sty = Math.floor(spot.ty / CHUNK);
@@ -468,6 +507,9 @@ function getChunk(cx, cy) {
 }
 
 function isSolidAt(wx, wy) {
+  // inside the dungeon, the same call answers from the room tilemap — the one
+  // seam that lets movement/combat/knockback code work unchanged in both modes
+  if (typeof Dungeon !== 'undefined' && Dungeon.active) return dungeonSolidAt(wx, wy);
   const tx = Math.floor(wx / TILE), ty = Math.floor(wy / TILE);
   const cx = Math.floor(tx / CHUNK), cy = Math.floor(ty / CHUNK);
   const ch = getChunk(cx, cy);

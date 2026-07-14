@@ -636,6 +636,94 @@ function drawWatcher(ctx, w, h, rng) {
 
 /* ---------------- build everything ---------------- */
 
+// The Great Stump — the dungeon entrance landmark: a colossal cut stump with
+// a dark doorway and two sconce torches, drawn in the storybook ink treatment.
+function drawStump(ctx, w, h, rng) {
+  const F = PALETTE.forest, DN = PALETTE.dungeon;
+  const cx = w / 2;
+  blobShadow(ctx, cx, h - 8, w * 0.42, 12);
+  // root flares
+  ctx.fillStyle = F.trunk;
+  for (const [dx, rw] of [[-w * 0.38, 26], [w * 0.38, 26], [-w * 0.18, 20], [w * 0.2, 20]]) {
+    Sketch.blob(ctx, [
+      [cx + dx - rw, h - 8], [cx + dx - rw * 0.3, h - 30],
+      [cx + dx + rw * 0.3, h - 32], [cx + dx + rw, h - 8],
+    ], rng, { fill: F.trunk, stroke: F.ink, lineWidth: 2.4, rough: 2 });
+  }
+  // main trunk body — wide, slightly tapered, scalloped bark edge
+  const bodyPts = [];
+  const topY = h * 0.24, botY = h - 10;
+  for (let i = 0; i <= 6; i++) {
+    bodyPts.push([cx - w * 0.44 + (i / 6) * 0.06 * w * (i % 2 ? 1 : 0.4), botY - (i / 6) * (botY - topY)]);
+  }
+  for (let i = 0; i <= 6; i++) {
+    bodyPts.push([cx - w * 0.38 + (i / 6) * w * 0.76, topY + (i % 2 ? 3 : -3)]);
+  }
+  for (let i = 0; i <= 6; i++) {
+    bodyPts.push([cx + w * 0.44 - (i / 6) * 0.06 * w * (i % 2 ? 1 : 0.4), topY + (i / 6) * (botY - topY)]);
+  }
+  Sketch.blob(ctx, bodyPts, rng, { fill: F.trunk, stroke: F.ink, lineWidth: 3, rough: 2.6 });
+  // cut top: ellipse with growth rings
+  ctx.save();
+  Sketch.ellipse(ctx, cx, topY, w * 0.41, h * 0.1, rng, { fill: F.woodLight, stroke: F.ink, lineWidth: 3, rough: 2 });
+  ctx.strokeStyle = withAlpha(F.trunk, 0.75);
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.ellipse(cx, topY, w * (0.3 - i * 0.09), h * (0.072 - i * 0.02), 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+  // bark texture squiggles
+  ctx.strokeStyle = withAlpha(F.ink, 0.5);
+  ctx.lineWidth = 1.8;
+  for (let i = 0; i < 7; i++) {
+    const bx = cx - w * 0.34 + rng() * w * 0.68;
+    const by = topY + h * 0.16 + rng() * (h * 0.4);
+    Sketch.line(ctx, bx, by, bx + (rng() - 0.5) * 6, by + 12 + rng() * 16, rng, { rough: 1.6, passes: 1 });
+  }
+  // the doorway: dark arch with a worn stone step
+  const dw = w * 0.2, dh = h * 0.3, dy = h - 12;
+  ctx.fillStyle = DN.dark;
+  ctx.beginPath();
+  ctx.moveTo(cx - dw, dy);
+  ctx.lineTo(cx - dw, dy - dh * 0.6);
+  ctx.quadraticCurveTo(cx, dy - dh * 1.25, cx + dw, dy - dh * 0.6);
+  ctx.lineTo(cx + dw, dy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = F.ink; ctx.lineWidth = 2.6;
+  ctx.stroke();
+  ctx.fillStyle = F.stone;
+  ctx.strokeStyle = F.ink; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(cx - dw - 4, dy - 5, dw * 2 + 8, 9, 4);
+  ctx.fill(); ctx.stroke();
+  // sconce torches flanking the door (flames animated at runtime by world code? no — baked cozy embers)
+  for (const side of [-1, 1]) {
+    const tx = cx + side * (dw + 16), ty = dy - dh * 0.66;
+    ctx.strokeStyle = F.ink; ctx.lineWidth = 2.2;
+    ctx.fillStyle = F.hoodDark;
+    rr(ctx, tx - 3, ty, 6, 18, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = DN.torchFlame;
+    Sketch.blob(ctx, [[tx - 5, ty + 2], [tx, ty - 12], [tx + 5, ty + 2], [tx, ty + 5]], rng,
+      { fill: DN.torchFlame, stroke: F.ink, lineWidth: 1.8, rough: 1.2 });
+    ctx.fillStyle = DN.torchGlow;
+    ctx.beginPath(); ctx.arc(tx, ty - 1, 2.4, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// wall torch used inside the dungeon: bracket + shaft baked; the flame is
+// drawn animated at runtime on top of the sconce anchor
+function drawTorchSconce(ctx, w, h, rng) {
+  const F = PALETTE.forest;
+  ctx.strokeStyle = F.ink; ctx.lineWidth = 2;
+  ctx.fillStyle = PALETTE.dungeon.iron;
+  rr(ctx, w / 2 - 5, h - 10, 10, 7, 2.5); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = F.hoodDark;
+  rr(ctx, w / 2 - 2.6, h - 22, 5.2, 14, 2.4); ctx.fill(); ctx.stroke();
+}
+
 function buildSprites(seedInt) {
   const R = mulberry32(seedInt ^ 0x5157);
 
@@ -787,6 +875,27 @@ function buildSprites(seedInt) {
   for (let boil = 0; boil < 2; boil++) {
     const rr2 = mulberry32(hash2i(9, boil, seedInt ^ 0x3E1));
     SPRITES.watcher.push(sprite(44, 46, 22, 42, (ctx) => drawWatcher(ctx, 44, 46, rr2)));
+  }
+
+  // the Great Stump (dungeon entrance) + dungeon torch sconce & baked glow
+  SPRITES.stump = sprite(230, 200, 115, 190, (ctx) => drawStump(ctx, 230, 200, R));
+  SPRITES.torch = [];
+  for (let boil = 0; boil < 2; boil++) {
+    const rr2 = mulberry32(hash2i(3, boil, seedInt ^ 0x70C));
+    SPRITES.torch.push(sprite(24, 30, 12, 26, (ctx) => drawTorchSconce(ctx, 24, 30, rr2)));
+  }
+  // torch glow: ONE baked radial sprite, composited 'lighter' at runtime with
+  // pulsing alpha/scale — never a per-frame gradient
+  {
+    const g = makeCanvas(160, 160);
+    const gctx = g.getContext('2d');
+    const grad = gctx.createRadialGradient(80, 80, 6, 80, 80, 78);
+    grad.addColorStop(0, withAlpha(PALETTE.dungeon.torchGlow, 0.34));
+    grad.addColorStop(0.55, withAlpha(PALETTE.dungeon.torchFlame, 0.12));
+    grad.addColorStop(1, withAlpha(PALETTE.dungeon.torchFlame, 0));
+    gctx.fillStyle = grad;
+    gctx.fillRect(0, 0, 160, 160);
+    SPRITES.torchGlow = g;
   }
 
   // paper grain tile (multiply-composited over the forest)

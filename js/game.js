@@ -82,6 +82,7 @@
   /* ---------- init ---------- */
   worldInit(seedInt);
   buildSprites(seedInt);
+  buildDungeon(seedInt);
   hudSeed.innerHTML = `<small>seed</small> ${seedStr.replace(/[<>&]/g, '')}`;
 
   World.onSpawnEntity = (spec, chunk) => {
@@ -171,12 +172,25 @@
   }
 
   /* ---------- simulation ---------- */
+  // shared input vector (keyboard + virtual joystick); both modes read this
+  function readInput() {
+    const p = game.player;
+    let ix = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+    let iy = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
+    if (game.touch.active) { ix += game.touch.dx; iy += game.touch.dy; }
+    if (game.deathT !== null || p.hurtLockT > 0) { ix = 0; iy = 0; }
+    return { ix, iy };
+  }
+
   function update(dt) {
     game.time += dt;
     if (game.dialogTimer > 0) {
       game.dialogTimer -= dt;
       if (game.dialogTimer <= 0) dialogEl.classList.remove('show');
     }
+
+    // the Hollow Stump (and its enter/exit fades) runs its own update path
+    if (Dungeon.fade || Dungeon.active) { updateDungeonMode(game, dt); return; }
 
     const p = game.player;
     p.px = p.x; p.py = p.y;
@@ -199,11 +213,7 @@
       if (game.deathT >= COMBAT.DEATH_FADE * 2) game.deathT = null;
     }
 
-    // input vector (keyboard + virtual joystick), normalized diagonals
-    let ix = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
-    let iy = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
-    if (game.touch.active) { ix += game.touch.dx; iy += game.touch.dy; }
-    if (game.deathT !== null || p.hurtLockT > 0) { ix = 0; iy = 0; }
+    let { ix, iy } = readInput();
     updatePlayerCombat(game, dt);
     if (p.attackState === 'windup' || p.attackState === 'active' || p.attackState === 'follow') {
       ix *= COMBAT.MOVE_DAMP; iy *= COMBAT.MOVE_DAMP;
@@ -268,6 +278,7 @@
       else if (e.kind === 'watcher') updateWatcher(e, game, dt);
       else if (e.kind === 'letter') updateLetter(e, game, dt);
       else if (e.kind === 'pickup') updatePickup(e, game, dt);
+      else if (e.kind === 'stumpdoor') updateStumpDoor(e, game, dt);
     }
     for (let i = game.rings.length - 1; i >= 0; i--) {
       game.rings[i].t += dt;
@@ -361,6 +372,12 @@
     const vw = innerWidth, vh = innerHeight;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+    if (Dungeon.active) {
+      renderDungeon(ctx, game, alpha, vw, vh);
+      drawDungeonFade(ctx, vw, vh);
+      return;
+    }
+
     const camX = lerp(game.cam.px, game.cam.x, alpha);
     const camY = lerp(game.cam.py, game.cam.y, alpha);
     let sx = 0, sy = 0;
@@ -422,40 +439,8 @@
       }
     }
 
-    // particles
-    for (const pt of game.particles) {
-      if (!pt.alive) continue;
-      const lifeT = pt.life / pt.maxLife;
-      if (pt.color === 'firefly') {
-        ctx.globalCompositeOperation = 'lighter';
-        const tw = 0.4 + 0.6 * Math.abs(Math.sin(pt.life * 5));
-        ctx.fillStyle = withAlpha(PALETTE.forest.firefly, 0.8 * tw * Math.min(1, lifeT * 3));
-        ctx.beginPath();
-        ctx.arc(pt.x - ox, pt.y - oy, pt.size + 1.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalCompositeOperation = 'source-over';
-      } else {
-        ctx.globalAlpha = 0.6 * lifeT;
-        ctx.fillStyle = pt.color;
-        ctx.beginPath();
-        ctx.arc(pt.x - ox, pt.y - oy, pt.size * (0.5 + 0.5 * lifeT), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1;
-      }
-    }
-
-    // slam dust rings
-    for (const rg of game.rings) {
-      const prog = rg.t / 0.35;
-      ctx.globalAlpha = (1 - prog) * 0.8;
-      ctx.strokeStyle = PALETTE.forest.groundSpeckle;
-      ctx.lineWidth = 7 * (1 - prog) + 1;
-      ctx.beginPath();
-      ctx.ellipse(rg.x - ox, rg.y - oy, COMBAT.SLAM_RADIUS * (0.4 + 0.7 * prog),
-        COMBAT.SLAM_RADIUS * 0.7 * (0.4 + 0.7 * prog), 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
+    drawParticles(ox, oy);
+    drawRings(ox, oy);
 
     // birds
     ctx.strokeStyle = withAlpha(PALETTE.forest.ink, 0.6);
@@ -471,36 +456,8 @@
       ctx.stroke();
     }
 
-    // interact prompt
-    const near = game.state === 'play' ? nearestInteractable() : null;
-    if (near) {
-      const bx = near.x - ox, by = near.y - oy - 52 + Math.sin(game.time * 4) * 3;
-      ctx.fillStyle = PALETTE.forest.cream;
-      ctx.strokeStyle = PALETTE.forest.ink;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(bx - 12, by - 12, 24, 24, 7);
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = PALETTE.forest.ink;
-      ctx.font = 'bold 14px Georgia, serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(game.isTouchDevice ? '!' : 'E', bx, by + 1);
-    }
-
-    // floating pickup text
-    ctx.font = 'bold 16px Georgia, serif';
-    ctx.textAlign = 'center';
-    for (const ft of game.floatTexts) {
-      const k = easeBackOut(Math.min(1, ft.t / 0.3));
-      ctx.globalAlpha = ft.t > 0.7 ? 1 - (ft.t - 0.7) / 0.4 : 1;
-      ctx.fillStyle = PALETTE.forest.cream;
-      ctx.strokeStyle = PALETTE.forest.ink;
-      ctx.lineWidth = 3;
-      const ty = ft.y - oy - k * 14 - (ft.t > 0.3 ? (ft.t - 0.3) * 24 : 0);
-      ctx.strokeText(ft.text, ft.x - ox, ty);
-      ctx.fillText(ft.text, ft.x - ox, ty);
-      ctx.globalAlpha = 1;
-    }
+    drawPrompt(ox, oy);
+    drawFloatTexts(ox, oy);
 
     // day/night tint
     const tint = tintColor();
@@ -522,6 +479,78 @@
       const a = game.deathT < half ? game.deathT / half : 1 - (game.deathT - half) / half;
       ctx.fillStyle = withAlpha(PALETTE.forest.cream, clamp(a, 0, 1));
       ctx.fillRect(0, 0, vw, vh);
+    }
+
+    drawDungeonFade(ctx, vw, vh);
+  }
+
+  // shared drawing helpers — used by both the overworld render and renderDungeon
+  function drawParticles(ox, oy) {
+    for (const pt of game.particles) {
+      if (!pt.alive) continue;
+      const lifeT = pt.life / pt.maxLife;
+      if (pt.color === 'firefly') {
+        ctx.globalCompositeOperation = 'lighter';
+        const tw = 0.4 + 0.6 * Math.abs(Math.sin(pt.life * 5));
+        ctx.fillStyle = withAlpha(PALETTE.forest.firefly, 0.8 * tw * Math.min(1, lifeT * 3));
+        ctx.beginPath();
+        ctx.arc(pt.x - ox, pt.y - oy, pt.size + 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      } else {
+        ctx.globalAlpha = 0.6 * lifeT;
+        ctx.fillStyle = pt.color;
+        ctx.beginPath();
+        ctx.arc(pt.x - ox, pt.y - oy, pt.size * (0.5 + 0.5 * lifeT), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  function drawRings(ox, oy) {
+    for (const rg of game.rings) {
+      const prog = rg.t / 0.35;
+      ctx.globalAlpha = (1 - prog) * 0.8;
+      ctx.strokeStyle = PALETTE.forest.groundSpeckle;
+      ctx.lineWidth = 7 * (1 - prog) + 1;
+      ctx.beginPath();
+      ctx.ellipse(rg.x - ox, rg.y - oy, COMBAT.SLAM_RADIUS * (0.4 + 0.7 * prog),
+        COMBAT.SLAM_RADIUS * 0.7 * (0.4 + 0.7 * prog), 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawPrompt(ox, oy) {
+    const near = game.state === 'play' ? nearestInteractable() : null;
+    if (!near) return;
+    const bx = near.x - ox, by = near.y - oy - 52 + Math.sin(game.time * 4) * 3;
+    ctx.fillStyle = PALETTE.forest.cream;
+    ctx.strokeStyle = PALETTE.forest.ink;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(bx - 12, by - 12, 24, 24, 7);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = PALETTE.forest.ink;
+    ctx.font = 'bold 14px Georgia, serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(game.isTouchDevice ? '!' : 'E', bx, by + 1);
+  }
+
+  function drawFloatTexts(ox, oy) {
+    ctx.font = 'bold 16px Georgia, serif';
+    ctx.textAlign = 'center';
+    for (const ft of game.floatTexts) {
+      const k = easeBackOut(Math.min(1, ft.t / 0.3));
+      ctx.globalAlpha = ft.t > 0.7 ? 1 - (ft.t - 0.7) / 0.4 : 1;
+      ctx.fillStyle = PALETTE.forest.cream;
+      ctx.strokeStyle = PALETTE.forest.ink;
+      ctx.lineWidth = 3;
+      const ty = ft.y - oy - k * 14 - (ft.t > 0.3 ? (ft.t - 0.3) * 24 : 0);
+      ctx.strokeText(ft.text, ft.x - ox, ty);
+      ctx.fillText(ft.text, ft.x - ox, ty);
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -604,7 +633,7 @@
     const x = lerp(p.px, p.x, alpha) - ox;
     const y = lerp(p.py, p.y, alpha) - oy;
     const bl = blendAtTile(Math.floor(p.x / TILE), Math.floor(p.y / TILE));
-    const style = bl < 0.5 ? 'desert' : 'forest';
+    const style = Dungeon.active ? 'forest' : bl < 0.5 ? 'desert' : 'forest';
     const frame = p.moving ? ((p.walkT | 0) % 2) : 0;
     const spr = SPRITES.player[style][p.dir][frame][boil];
     const side = p.dir === 2 ? -1 : 1;
@@ -771,6 +800,20 @@
       ctx.fillStyle = PALETTE.forest.letterStamp;
       ctx.beginPath(); ctx.arc(lx, ly, 2.5, 0, Math.PI * 2); ctx.fill();
     }
+    // the Great Stump (dungeon entrance)
+    if (World.stumpSpot) {
+      const s = World.stumpSpot;
+      const lx = mx + size / 2 + (s.tx * TILE - p.x) / (TILE * CELL) * scale;
+      const ly = my + size / 2 + (s.ty * TILE - p.y) / (TILE * CELL) * scale;
+      if (lx >= mx + 5 && lx <= mx + size - 5 && ly >= my + 5 && ly <= my + size - 5) {
+        ctx.fillStyle = PALETTE.forest.trunk;
+        ctx.strokeStyle = PALETTE.forest.ink;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc(lx, ly, 3.6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = PALETTE.dungeon.dark;
+        ctx.beginPath(); ctx.arc(lx, ly + 0.8, 1.4, 0, Math.PI * 2); ctx.fill();
+      }
+    }
     // player
     ctx.fillStyle = PALETTE.forest.ink;
     ctx.beginPath(); ctx.arc(mx + size / 2, my + size / 2, 3.5, 0, Math.PI * 2); ctx.fill();
@@ -851,6 +894,15 @@
     }
     render(game.state === 'play' ? clamp(acc / STEP, 0, 1) : 1);
   }
+
+  // the dungeon mode borrows these to stay visually identical to the overworld
+  game.draw = {
+    player: drawPlayer, entity: drawEntity, hearts: drawHearts,
+    particles: drawParticles, floatTexts: drawFloatTexts, rings: drawRings,
+    prompt: drawPrompt, joystick: drawJoystick,
+  };
+  game.showDialog = showDialog;
+  game.readInput = readInput;
 
   // warm the spawn area, then go
   getChunk(0, 0); getChunk(-1, 0); getChunk(0, -1); getChunk(-1, -1);
