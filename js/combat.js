@@ -207,6 +207,7 @@ function hitEnemy(game, e, finisher) {
   const F = PALETTE.forest;
 
   if (e.kind === 'pot') { smashPot(game, e); return; }   // dungeon pots shatter, no combat feedback stack
+  if (e.onStaffHit) { e.onStaffHit(game, e, finisher); return; }   // custom reactions (snapper bonk)
 
   if (e.kind === 'watcher') {
     // unkillable, but reactive: spin + first-bonk trinkets
@@ -261,6 +262,8 @@ function defeatEnemy(game, e) {
     const r = Math.random();
     if (r < COMBAT.HEART_DROP_SLIME) spawnPickup(game, e.x, e.y, 'heart');
     spawnPickup(game, e.x, e.y, 'trinket');
+  } else if (e.onDefeat) {
+    e.onDefeat(game, e);
   }
   game.removeEntity(e);
 }

@@ -32,6 +32,14 @@ const DUNGEON = Object.freeze({
   CHEST_RISE_T: 0.4,               // item rises 20px over this (s)
   CHEST_GRANT_T: 0.9,              // total ceremony time before the item is granted
   KEY_RADIUS: 16,                  // px pickup touch radius
+  // enemies (pass 3) — telegraph band 0.4–1.0s per the TMC decomp research
+  SHUTTER_ARM: 0.35,               // s after entering a combat room before doors slam
+  PEBBLIT: Object.freeze({ HP: 2, SPEED: 55, WALK_MIN: 0.5, WALK_MAX: 1.5, PAUSE_MIN: 0.4,
+    PAUSE_MAX: 1.0, SPIT_CHANCE: 0.34, CROUCH: 0.5, SHOT_SPEED: 150, SHOT_DMG: 1,
+    CONTACT: 1, RADIUS: 13, HEART_DROP: 0.2 }),
+  GLOOM: Object.freeze({ HP: 1, REST_MIN: 1.0, REST_MAX: 2.0, SPEED: 90, WOBBLE_AMP: 6,
+    WOBBLE_HZ: 7, CONTACT: 1, RADIUS: 12 }),
+  SNAPPER: Object.freeze({ ALIGN: 14, DASH: 260, RETRACT: 70, CONTACT: 2, RADIUS: 15, BONK: 260 }),
 });
 
 const Dungeon = {
@@ -49,8 +57,9 @@ const Dungeon = {
   leaves: {},                      // baked door-leaf sprites
   spr: {},                         // baked interactable sprites
   // session-long flags: chests stay open forever, latched switches stay
-  // latched; smashed pots regrow when the dungeon is re-entered
-  flags: { smashed: new Set(), latched: new Set(), chests: new Set(), keysTaken: new Set() },
+  // latched; smashed pots regrow and enemies respawn when re-entering
+  flags: { smashed: new Set(), latched: new Set(), chests: new Set(), keysTaken: new Set(), dead: new Set() },
+  combatLock: null,                // { room, armT } while a combat room is sealing/sealed
 };
 
 // what each chest holds, by room
@@ -650,6 +659,103 @@ function bakeDungeonProps(seedInt) {
     });
   }
 
+  // --- enemies ---
+  S.pebblit = [];
+  for (let frame = 0; frame < 2; frame++) {
+    const R = mulberry32(seedInt ^ (0x9EB + frame));
+    S.pebblit.push(sprite(38, 34, 19, 28, (ctx) => {
+      blobShadow(ctx, 19, 28, 12, 3.5);
+      const lift = frame ? 2 : 0;
+      // stubby feet
+      ctx.fillStyle = shade(PALETTE.forest.stone, 0.75);
+      ctx.strokeStyle = F.ink; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.ellipse(11, 27 - (frame ? 0 : 2), 4, 3, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(27, 27 - lift, 4, 3, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      // pebble body
+      Sketch.blob(ctx, [
+        [6, 20], [8, 10], [16, 5], [24, 5], [32, 11], [33, 20], [26, 26], [12, 26],
+      ], R, { fill: F.stone, stroke: F.ink, lineWidth: 2.2, rough: 1.6 });
+      // mossy cap + sleepy eyes
+      ctx.fillStyle = withAlpha(F.canopyMid, 0.65);
+      ctx.beginPath(); ctx.arc(14, 9, 3.4, 0, Math.PI * 2); ctx.arc(22, 8, 2.6, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = F.ink; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(13, 16); ctx.lineTo(18, 16); ctx.stroke();   // lidded eyes
+      ctx.beginPath(); ctx.moveTo(22, 16); ctx.lineTo(27, 16); ctx.stroke();
+      ctx.beginPath(); ctx.arc(20, 21, 1.6, 0.2, Math.PI - 0.2); ctx.stroke(); // small mouth
+    }));
+  }
+
+  S.gloomwing = [];
+  for (let frame = 0; frame < 3; frame++) {
+    const R = mulberry32(seedInt ^ (0x6100 + frame));
+    S.gloomwing.push(sprite(46, 38, 23, 30, (ctx) => {
+      blobShadow(ctx, 23, 31, 10, 2.6);
+      const DNc = PALETTE.dungeon;
+      const up = frame === 1;
+      if (frame < 2) {
+        // flying: two big scalloped wings, up or out
+        for (const side of [-1, 1]) {
+          ctx.save();
+          ctx.translate(23, 18);
+          ctx.rotate(side * (up ? -0.55 : 0.12));
+          Sketch.cloud(ctx, side * 11, -2, 10, up ? 6 : 8, 5, R,
+            { fill: DNc.moth, stroke: F.ink, lineWidth: 2, rough: 1.6 });
+          ctx.fillStyle = withAlpha(F.ink, 0.25);
+          ctx.beginPath(); ctx.arc(side * 12, -2, 2.4, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+        }
+      } else {
+        // resting: wings folded upward like a little tent
+        Sketch.blob(ctx, [[16, 8], [23, 2], [30, 8], [27, 22], [19, 22]], R,
+          { fill: DNc.moth, stroke: F.ink, lineWidth: 2, rough: 1.4 });
+      }
+      // furry body + antennae
+      Sketch.ellipse(ctx, 23, 22, 5.5, 7, R, { fill: shade(PALETTE.dungeon.moth, 0.7), stroke: F.ink, lineWidth: 2, rough: 1 });
+      ctx.strokeStyle = F.ink; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(21, 16); ctx.quadraticCurveTo(18, 11, 16, 10); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(25, 16); ctx.quadraticCurveTo(28, 11, 30, 10); ctx.stroke();
+      ctx.fillStyle = F.ink;
+      ctx.beginPath(); ctx.arc(21, 19, 1.2, 0, Math.PI * 2); ctx.arc(25, 19, 1.2, 0, Math.PI * 2); ctx.fill();
+    }));
+  }
+
+  {
+    const R = mulberry32(seedInt ^ 0x54A9);
+    S.snapper = sprite(40, 40, 20, 26, (ctx) => {
+      blobShadow(ctx, 20, 33, 13, 3.5);
+      const DNc = PALETTE.dungeon;
+      // spikes
+      ctx.fillStyle = shade(PALETTE.dungeon.snapper, 0.8);
+      ctx.strokeStyle = F.ink; ctx.lineWidth = 1.8;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + 0.39;
+        const sx = 20 + Math.cos(a) * 13, sy = 20 + Math.sin(a) * 13;
+        ctx.beginPath();
+        ctx.moveTo(20 + Math.cos(a - 0.28) * 10, 20 + Math.sin(a - 0.28) * 10);
+        ctx.lineTo(sx + Math.cos(a) * 5, sy + Math.sin(a) * 5);
+        ctx.lineTo(20 + Math.cos(a + 0.28) * 10, 20 + Math.sin(a + 0.28) * 10);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+      }
+      // body
+      Sketch.ellipse(ctx, 20, 20, 11, 11, R, { fill: DNc.snapper, stroke: F.ink, lineWidth: 2.2, rough: 1.4 });
+      // cross frown
+      ctx.strokeStyle = F.ink; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(14, 17); ctx.lineTo(18, 19); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(26, 17); ctx.lineTo(22, 19); ctx.stroke();
+      ctx.fillStyle = F.ink;
+      ctx.beginPath(); ctx.arc(16.5, 20.5, 1.4, 0, Math.PI * 2); ctx.arc(23.5, 20.5, 1.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(20, 25, 2, 0.15, Math.PI - 0.15); ctx.stroke();
+    });
+  }
+
+  {
+    const R = mulberry32(seedInt ^ 0x9EBB1E);
+    S.pebble = sprite(14, 14, 7, 9, (ctx) => {
+      Sketch.ellipse(ctx, 7, 7, 4.5, 4, R, { fill: F.stone, stroke: F.ink, lineWidth: 1.6, rough: 0.8 });
+    });
+  }
+
   {
     // a blossom bomb bud (chest ceremony + pass 4 item)
     const R = mulberry32(seedInt ^ 0xB0B);
@@ -674,11 +780,12 @@ function bakeDungeonProps(seedInt) {
 function activateRoom(game, room) {
   // despawn everything room-scoped (dungeon entities never outlive their room)
   game.entities.length = 0;
+  releaseShutters(game, true);      // leaving a sealed room (death) never wedges its doors
   room.dyn = new Map();
   const W = DUNGEON.ROOM_W;
   const addDyn = (lx, ly, e) => room.dyn.set(ly * W + lx, e);
   const solved = roomSwitchesLatched(room);
-  let potIdx = 0;
+  let potIdx = 0, enemyIdx = 0, hasEnemies = false;
   for (const sp of room.spawns) {
     const wx = room.ox + (sp.lx + 0.5) * TILE;
     const wy = room.oy + (sp.ly + 0.5) * TILE;
@@ -715,9 +822,258 @@ function activateRoom(game, room) {
     } else if (sp.ch === 'k') {
       const id = room.key + ':key';
       if (Dungeon.flags.keysTaken.has(id)) continue;
+      // combat-room keys appear only once the room is cleared
+      if (room.key === '3,2' && !room.clearedThisVisit) { room.pendingKey = { x: wx, y: wy, id }; continue; }
       game.entities.push({ kind: 'dkey', id, x: wx, y: wy, px: wx, py: wy, bobT: Math.random() * 6 });
+    } else if (sp.ch === 'o' || sp.ch === 'm' || sp.ch === 'x') {
+      const id = room.key + ':e' + enemyIdx++;
+      if (sp.ch !== 'x' && Dungeon.flags.dead.has(id)) continue;
+      const e = spawnDungeonEnemy(sp.ch, id, wx, wy, room);
+      game.entities.push(e);
+      if (sp.ch !== 'x') hasEnemies = true;
     }
-    // enemy chars (o m x X) spawn in pass 3 / 5
+    // the boss char (X) spawns in pass 5
+  }
+  // combat room: seal the doors shortly after entry until it is cleared
+  if (room.key === '3,2' && hasEnemies) {
+    Dungeon.combatLock = { room, armT: DUNGEON.SHUTTER_ARM, sealed: false };
+  }
+}
+
+function spawnDungeonEnemy(ch, id, wx, wy, room) {
+  const e = { id, x: wx, y: wy, px: wx, py: wy, homeX: wx, homeY: wy, room,
+              flashT: 0, squashT: 0, staggerT: 0, dazedT: 0, kbx: 0, kby: 0,
+              frame: 0, animT: 0 };
+  if (ch === 'o') {
+    e.kind = 'pebblit';
+    e.hittable = true;
+    e.hp = DUNGEON.PEBBLIT.HP;
+    e.radius = DUNGEON.PEBBLIT.RADIUS;
+    e.st = 'pause'; e.t = 0.3 + Math.random() * 0.5; e.dir = (Math.random() * 4) | 0;
+    e.onDefeat = (game, en) => {
+      Dungeon.flags.dead.add(en.id);
+      if (Math.random() < DUNGEON.PEBBLIT.HEART_DROP) spawnPickup(game, en.x, en.y, 'heart');
+      spawnPickup(game, en.x, en.y, 'trinket');
+      checkRoomCleared(game);
+    };
+  } else if (ch === 'm') {
+    e.kind = 'gloomwing';
+    e.hittable = true;
+    e.hp = DUNGEON.GLOOM.HP;
+    e.radius = DUNGEON.GLOOM.RADIUS;
+    e.st = 'rest'; e.t = DUNGEON.GLOOM.REST_MIN + Math.random();
+    e.wingT = Math.random() * 6;
+    e.onDefeat = (game, en) => {
+      Dungeon.flags.dead.add(en.id);
+      spawnPickup(game, en.x, en.y, 'trinket');
+      checkRoomCleared(game);
+    };
+  } else {
+    e.kind = 'snapper';
+    e.hittable = true;               // bonkable, never killable
+    e.radius = DUNGEON.SNAPPER.RADIUS;
+    e.st = 'idle'; e.spin = 0;
+    e.onStaffHit = (game, en) => {
+      const p = game.player;
+      const d = Math.hypot(en.x - p.x, en.y - p.y) || 1;
+      en.kbx += ((en.x - p.x) / d) * DUNGEON.SNAPPER.BONK;
+      en.kby += ((en.y - p.y) / d) * DUNGEON.SNAPPER.BONK;
+      en.flashT = COMBAT.FLASH_TIME;
+      en.st = 'retract';
+      game.freeze(COMBAT.HITSTOP);
+      game.floatText(en.x, en.y - 26, 'tink!');
+      game.burst(en.x, en.y - 8, 5, PALETTE.fx.flash);
+    };
+  }
+  return e;
+}
+
+/* --- combat-room shutters --- */
+
+function sealShutters(game, room) {
+  for (const d of room.doors) {
+    const door = d.door;
+    if (door.state === 'open' && door.type !== 'exit' && door.type !== 'ledge') {
+      door.state = 'closed';
+      door.anim = 0;
+      door.shuttered = true;
+      game.burst((d.tx + 0.5) * TILE, (d.ty + 0.5) * TILE, 6, PALETTE.dungeon.floorSpeckle);
+    }
+  }
+  game.shake(0.12, 0.01);
+}
+
+function releaseShutters(game, silent) {
+  let any = false;
+  for (const door of Dungeon.doors.values()) {
+    if (door.shuttered) {
+      door.shuttered = false;
+      if (silent) { door.state = 'open'; door.anim = 1; }
+      else door.opening = true;
+      any = true;
+    }
+  }
+  Dungeon.combatLock = null;
+  return any;
+}
+
+function checkRoomCleared(game) {
+  const room = Dungeon.cur;
+  if (!room) return;
+  for (const e of game.entities) {
+    if (e.kind === 'pebblit' || e.kind === 'gloomwing') {
+      if (e.hp > 0) return;
+    }
+  }
+  room.clearedThisVisit = true;
+  if (Dungeon.combatLock && Dungeon.combatLock.room === room) {
+    releaseShutters(game, false);
+    game.shake(0.08, 0.006);
+  }
+  if (room.pendingKey && !Dungeon.flags.keysTaken.has(room.pendingKey.id)) {
+    const k = room.pendingKey;
+    game.entities.push({ kind: 'dkey', id: k.id, x: k.x, y: k.y, px: k.x, py: k.y, bobT: 0 });
+    game.burst(k.x, k.y - 8, 10, PALETTE.dungeon.keyGold);
+    game.floatText(k.x, k.y - 30, 'a key!');
+    room.pendingKey = null;
+  }
+}
+
+/* --- enemy AI --- */
+
+const DUNGEON_DIRV = [[0, 1], [0, -1], [-1, 0], [1, 0]];   // down, up, left, right
+
+function updatePebblit(e, game, dt) {
+  const C = DUNGEON.PEBBLIT;
+  const p = game.player;
+  if (updateHurtState(e, dt)) return;
+  e.t -= dt;
+  if (e.st === 'walk') {
+    const [dx, dy] = DUNGEON_DIRV[e.dir];
+    const nx = e.x + dx * C.SPEED * dt, ny = e.y + dy * C.SPEED * dt;
+    if (!isSolidAt(nx + dx * e.radius, e.y) && !isSolidAt(nx, e.y)) e.x = nx;
+    else e.t = 0;
+    if (!isSolidAt(e.x, ny + dy * e.radius) && !isSolidAt(e.x, ny)) e.y = ny;
+    else e.t = 0;
+    e.animT += dt * 6;
+    e.frame = (e.animT | 0) % 2;
+    if (e.t <= 0) { e.st = 'pause'; e.t = C.PAUSE_MIN + Math.random() * (C.PAUSE_MAX - C.PAUSE_MIN); }
+  } else if (e.st === 'pause') {
+    e.frame = 0;
+    if (e.t <= 0) {
+      if (Math.random() < C.SPIT_CHANCE) {
+        e.st = 'crouch'; e.t = C.CROUCH;
+        // aim at the player's dominant axis (the readable telegraph)
+        const ax = p.x - e.x, ay = p.y - e.y;
+        e.dir = Math.abs(ax) > Math.abs(ay) ? (ax > 0 ? 3 : 2) : (ay > 0 ? 0 : 1);
+      } else {
+        e.st = 'walk'; e.t = C.WALK_MIN + Math.random() * (C.WALK_MAX - C.WALK_MIN);
+        e.dir = (Math.random() * 4) | 0;
+      }
+    }
+  } else if (e.st === 'crouch') {
+    if (e.t <= 0) {
+      const [dx, dy] = DUNGEON_DIRV[e.dir];
+      game.entities.push({ kind: 'pebble', x: e.x + dx * 14, y: e.y - 8 + dy * 14,
+        px: e.x, py: e.y, vx: dx * C.SHOT_SPEED, vy: dy * C.SHOT_SPEED, age: 0 });
+      e.st = 'pause'; e.t = C.PAUSE_MIN;
+    }
+  }
+  if (dist2(e.x, e.y, p.x, p.y) < (e.radius + p.radius + 2) ** 2) {
+    damagePlayer(game, C.CONTACT, e.x, e.y);
+  }
+}
+
+function updatePebble(e, game, dt) {
+  e.age += dt;
+  e.x += e.vx * dt; e.y += e.vy * dt;
+  const p = game.player;
+  if (dist2(e.x, e.y, p.x, p.y) < (8 + p.radius) ** 2) {
+    damagePlayer(game, DUNGEON.PEBBLIT.SHOT_DMG, e.x - e.vx, e.y - e.vy);
+    game.removeEntity(e);
+    return;
+  }
+  if (e.age > 3 || isSolidAt(e.x, e.y)) {
+    game.burst(e.x, e.y, 4, PALETTE.forest.stone);
+    game.removeEntity(e);
+  }
+}
+
+function updateGloomwing(e, game, dt) {
+  const C = DUNGEON.GLOOM;
+  const p = game.player;
+  if (updateHurtState(e, dt)) return;
+  e.wingT += dt;
+  if (e.st === 'rest') {
+    e.t -= dt;
+    e.frame = 2;                    // wings folded
+    if (e.t <= 0) {
+      const room = e.room;
+      const tx = clamp(p.x + (Math.random() - 0.5) * TILE * 3, room.ox + TILE * 1.5, room.ox + ROOM_PX_W - TILE * 1.5);
+      const ty = clamp(p.y + (Math.random() - 0.5) * TILE * 3, room.oy + TILE * 1.5, room.oy + ROOM_PX_H - TILE * 1.5);
+      const d = Math.hypot(tx - e.x, ty - e.y) || 1;
+      e.st = 'fly'; e.ft = 0; e.dur = Math.max(0.5, d / C.SPEED);
+      e.fx = e.x; e.fy = e.y; e.tx = tx; e.ty = ty;
+      e.nx = -(ty - e.y) / d; e.ny = (tx - e.x) / d;   // perpendicular for wobble
+    }
+  } else {
+    e.ft += dt;
+    const u = clamp(e.ft / e.dur, 0, 1);
+    const s = u * u * (3 - 2 * u);                     // ease in-out: flutter, not dart
+    const wob = Math.sin(e.ft * Math.PI * 2 * C.WOBBLE_HZ) * C.WOBBLE_AMP * Math.sin(Math.PI * u);
+    e.x = lerp(e.fx, e.tx, s) + e.nx * wob;
+    e.y = lerp(e.fy, e.ty, s) + e.ny * wob;
+    e.frame = ((e.wingT * 14) | 0) % 2;
+    if (u >= 1) { e.st = 'rest'; e.t = C.REST_MIN + Math.random() * (C.REST_MAX - C.REST_MIN); }
+  }
+  if (dist2(e.x, e.y, p.x, p.y) < (e.radius + p.radius) ** 2) {
+    damagePlayer(game, C.CONTACT, e.x, e.y);
+  }
+}
+
+function updateSnapper(e, game, dt) {
+  const C = DUNGEON.SNAPPER;
+  const p = game.player;
+  updateHurtState(e, dt);           // bonk knockback; snappers never stagger out of damage
+  if (e.st === 'idle') {
+    const alignX = Math.abs(p.x - e.x) < C.ALIGN;
+    const alignY = Math.abs(p.y - e.y) < C.ALIGN;
+    if (alignX || alignY) {
+      // clear straight line to the player's lane?
+      const dx = alignX ? 0 : Math.sign(p.x - e.x);
+      const dy = alignX ? Math.sign(p.y - e.y) : 0;
+      let blocked = false;
+      const steps = Math.floor(Math.hypot(p.x - e.x, p.y - e.y) / TILE);
+      for (let i = 1; i <= steps; i++) {
+        if (isSolidAt(e.x + dx * i * TILE, e.y + dy * i * TILE)) { blocked = true; break; }
+      }
+      if (!blocked && (dx || dy)) {
+        e.st = 'dash'; e.dx = dx; e.dy = dy;
+        e.targetX = p.x; e.targetY = p.y;
+      }
+    }
+  } else if (e.st === 'dash') {
+    const nx = e.x + e.dx * C.DASH * dt, ny = e.y + e.dy * C.DASH * dt;
+    const aheadX = nx + e.dx * e.radius, aheadY = ny + e.dy * e.radius;
+    const passed = (e.dx && (e.dx > 0 ? nx > e.targetX + TILE : nx < e.targetX - TILE)) ||
+                   (e.dy && (e.dy > 0 ? ny > e.targetY + TILE : ny < e.targetY - TILE));
+    if (isSolidAt(aheadX, aheadY) || passed) {
+      e.st = 'retract';
+      game.shake(0.06, 0.005);
+      game.burst(e.x, e.y, 5, PALETTE.dungeon.snapper);
+    } else { e.x = nx; e.y = ny; e.spin += dt * 14; }
+  } else {
+    const dx = e.homeX - e.x, dy = e.homeY - e.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 3) { e.x = e.homeX; e.y = e.homeY; e.st = 'idle'; }
+    else {
+      e.x += (dx / d) * C.RETRACT * dt;
+      e.y += (dy / d) * C.RETRACT * dt;
+      e.spin += dt * 3;
+    }
+  }
+  if (dist2(e.x, e.y, p.x, p.y) < (e.radius + p.radius) ** 2) {
+    damagePlayer(game, C.CONTACT, e.x, e.y);
   }
 }
 
@@ -989,6 +1345,8 @@ function enterDungeon(game) {
       game.entities = [];
       Dungeon.active = true;
       Dungeon.flags.smashed.clear();   // pots regrow between visits
+      Dungeon.flags.dead.clear();      // and enemies come back
+      for (const r of Dungeon.rooms.values()) { r.clearedThisVisit = false; r.pendingKey = null; }
       placePlayerInDungeon(game);
       game.showDialog('The Hollow Stump. Somewhere below, a quill is still scratching.');
     },
@@ -1187,6 +1545,15 @@ function updateDungeonMode(game, dt) {
   checkDoorUnlock(game, dt);
   updateDoors(game, dt);
 
+  // combat room seals shortly after entry
+  if (Dungeon.combatLock && !Dungeon.combatLock.sealed) {
+    Dungeon.combatLock.armT -= dt;
+    if (Dungeon.combatLock.armT <= 0) {
+      Dungeon.combatLock.sealed = true;
+      sealShutters(game, Dungeon.combatLock.room);
+    }
+  }
+
   // room entities
   for (const e of game.entities) {
     e.px = e.x; e.py = e.y;
@@ -1195,6 +1562,10 @@ function updateDungeonMode(game, dt) {
     else if (e.kind === 'dchest') updateDChest(e, game, dt);
     else if (e.kind === 'dkey') updateDKey(e, game, dt);
     else if (e.kind === 'dswitch') updateDSwitch(e, game, dt);
+    else if (e.kind === 'pebblit') updatePebblit(e, game, dt);
+    else if (e.kind === 'pebble') updatePebble(e, game, dt);
+    else if (e.kind === 'gloomwing') updateGloomwing(e, game, dt);
+    else if (e.kind === 'snapper') updateSnapper(e, game, dt);
   }
   checkRoomWiring(game);
 
@@ -1399,7 +1770,53 @@ function drawDungeonEntity(c, e, alpha, ox, oy) {
     c.drawImage(S.key.c, x - S.key.ax, y - S.key.ay + bob);
     return true;
   }
+  if (e.kind === 'pebblit') {
+    const spr = S.pebblit[e.frame];
+    drawDCreature(c, e, spr, x, y, e.st === 'crouch' ? 0.14 : 0, e.st === 'crouch');
+    return true;
+  }
+  if (e.kind === 'gloomwing') {
+    const spr = S.gloomwing[e.frame];
+    drawDCreature(c, e, spr, x, y, 0, false);
+    return true;
+  }
+  if (e.kind === 'snapper') {
+    const spr = S.snapper;
+    const img = e.flashT > 0 ? flashOf(spr) : spr.c;
+    c.save();
+    c.translate(x, y - 8);
+    c.rotate(e.spin);
+    c.drawImage(img, -spr.ax, -spr.ay + 8);
+    c.restore();
+    return true;
+  }
+  if (e.kind === 'pebble') {
+    c.save();
+    c.translate(x, y);
+    c.rotate(e.age * 9);
+    c.drawImage(S.pebble.c, -S.pebble.ax, -S.pebble.ay);
+    c.restore();
+    return true;
+  }
   return false;
+}
+
+// creature blit with the shared combat feedback (flash / squash / crouch pose)
+function drawDCreature(c, e, spr, x, y, lean, crouch) {
+  const k = e.squashT > 0 ? clamp(e.squashT / COMBAT.SQUASH_TIME, 0, 1) : 0;
+  const img = e.flashT > 0 ? flashOf(spr) : spr.c;
+  c.save();
+  c.translate(x, y);
+  if (lean) c.rotate(lean);
+  if (k) c.scale(1 + 0.25 * k, 1 - 0.25 * k);
+  else if (crouch) c.scale(1.12, 0.82);
+  c.drawImage(img, -spr.ax, -spr.ay);
+  c.restore();
+  if (crouch) {
+    // telegraph: a puff of grit before the spit
+    c.fillStyle = withAlpha(PALETTE.forest.ink, 0.5 + 0.3 * Math.sin(performance.now() / 60));
+    c.beginPath(); c.arc(x, y - spr.ay - 8, 3, 0, Math.PI * 2); c.fill();
+  }
 }
 
 // the parchment room map (replaces the minimap while inside)
