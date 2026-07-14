@@ -40,6 +40,9 @@ const DUNGEON = Object.freeze({
   GLOOM: Object.freeze({ HP: 1, REST_MIN: 1.0, REST_MAX: 2.0, SPEED: 90, WOBBLE_AMP: 6,
     WOBBLE_HZ: 7, CONTACT: 1, RADIUS: 12 }),
   SNAPPER: Object.freeze({ ALIGN: 14, DASH: 260, RETRACT: 70, CONTACT: 2, RADIUS: 15, BONK: 260 }),
+  // the item (pass 4): Blossom Bombs
+  BOMB: Object.freeze({ THROW_T: 0.35, DIST: 100, ARC: 22, FUSE: 1.2, BLINK_LATE: 0.4,
+    RADIUS: 70, DMG: 2, SELF_DMG: 1, CD: 0.35, REGROW: 8, CRACK_RADIUS: 95, CAP: 3 }),
 });
 
 const Dungeon = {
@@ -757,6 +760,24 @@ function bakeDungeonProps(seedInt) {
   }
 
   {
+    // cracked boulder (overworld bomb-gated cache)
+    const R = mulberry32(seedInt ^ 0xB01D);
+    S.boulder = sprite(66, 60, 33, 52, (ctx) => {
+      blobShadow(ctx, 33, 52, 22, 6);
+      Sketch.blob(ctx, [
+        [10, 44], [6, 28], [16, 12], [33, 7], [50, 12], [60, 28], [56, 44], [33, 50],
+      ], R, { fill: F.stone, stroke: F.ink, lineWidth: 2.6, rough: 2 });
+      ctx.fillStyle = shade(PALETTE.forest.stone, 1.12);
+      Sketch.ellipse(ctx, 26, 20, 10, 6, R, { fill: shade(PALETTE.forest.stone, 1.12) });
+      // the tell-tale cracks
+      ctx.strokeStyle = withAlpha(F.ink, 0.85); ctx.lineWidth = 2;
+      Sketch.line(ctx, 33, 14, 30, 30, R, { rough: 2.4, passes: 1 });
+      Sketch.line(ctx, 30, 30, 38, 42, R, { rough: 2.4, passes: 1 });
+      Sketch.line(ctx, 30, 30, 20, 36, R, { rough: 2, passes: 1 });
+    });
+  }
+
+  {
     // a blossom bomb bud (chest ceremony + pass 4 item)
     const R = mulberry32(seedInt ^ 0xB0B);
     S.bloom = sprite(26, 26, 13, 22, (ctx) => {
@@ -794,7 +815,8 @@ function activateRoom(game, room) {
       if (Dungeon.flags.smashed.has(id)) continue;
       const r = rng2(room.gx * W + sp.lx, room.gy * DUNGEON.ROOM_H + sp.ly, World.seedInt ^ 0x907);
       const e = { kind: 'pot', id, x: wx, y: wy, px: wx, py: wy, lx: sp.lx, ly: sp.ly,
-                  radius: 14, hittable: true, variant: (r() * 2) | 0, drop: r() };
+                  radius: 14, hittable: true, variant: (r() * 2) | 0, drop: r(),
+                  bloomPot: room.key === '0,2' || room.key === '0,1' };   // bomb-wing pots drop spare blooms
       game.entities.push(e);
       addDyn(sp.lx, sp.ly, e);
     } else if (sp.ch === 'B') {
@@ -937,6 +959,160 @@ function checkRoomCleared(game) {
     game.floatText(k.x, k.y - 30, 'a key!');
     room.pendingKey = null;
   }
+}
+
+/* --- Blossom Bombs (pass 4) --- */
+
+function throwBomb(game) {
+  const B = game.bombs;
+  if (!B || game.deathT !== null || game.state !== 'play') return;
+  if (Dungeon.fade || Dungeon.slide) return;
+  if (B.cd > 0 || B.count <= 0) {
+    if (B.count <= 0 && (!B.emptyHintT || B.emptyHintT < game.time - 2)) {
+      B.emptyHintT = game.time;
+      game.floatText(game.player.x, game.player.y - 44, 'no blooms yet...');
+    }
+    return;
+  }
+  B.count--;
+  B.cd = DUNGEON.BOMB.CD;
+  const p = game.player;
+  const DIRV = DUNGEON_DIRV[p.dir];
+  game.entities.push({
+    kind: 'bomb', age: 0,
+    sx: p.x, sy: p.y - 10,
+    x: p.x, y: p.y - 10, px: p.x, py: p.y - 10,
+    tx: p.x + DIRV[0] * DUNGEON.BOMB.DIST,
+    ty: p.y + DIRV[1] * DUNGEON.BOMB.DIST,
+  });
+}
+
+// shared item upkeep, called from both mode updates
+function updateBombItem(game, dt) {
+  const B = game.bombs;
+  if (!B) return;
+  if (B.cd > 0) B.cd -= dt;
+  if (B.count < B.cap) {
+    B.regrowT += dt;
+    if (B.regrowT >= DUNGEON.BOMB.REGROW) {
+      B.regrowT = 0;
+      B.count++;
+    }
+  } else B.regrowT = 0;
+}
+
+function updateBomb(e, game, dt) {
+  e.age += dt;
+  const u = clamp(e.age / DUNGEON.BOMB.THROW_T, 0, 1);
+  e.x = lerp(e.sx, e.tx, u);
+  e.y = lerp(e.sy, e.ty, u) - Math.sin(Math.PI * u) * DUNGEON.BOMB.ARC;
+  if (e.age >= DUNGEON.BOMB.FUSE) explodeBomb(game, e);
+}
+
+function explodeBomb(game, e) {
+  const B = DUNGEON.BOMB, D = PALETTE.desert;
+  game.removeEntity(e);
+  game.burst(e.x, e.y - 6, 16, D.blossom);
+  game.burst(e.x, e.y - 6, 8, D.blossomLight);
+  game.rings.push({ x: e.x, y: e.y, t: 0 });
+  game.shake(0.15, 0.012);
+  game.freeze(0.05);
+
+  const p = game.player;
+  if (dist2(p.x, p.y, e.x, e.y) < (B.RADIUS + p.radius) ** 2) {
+    damagePlayer(game, B.SELF_DMG, e.x, e.y);   // gentle, but teaches spacing
+  }
+
+  for (const en of [...game.entities]) {
+    if (en === e || en.kind === 'bomb') continue;
+    const r = en.radius || 14;
+    if (dist2(en.x, en.y, e.x, e.y) > (B.RADIUS + r) ** 2) continue;
+    if (en.kind === 'pot') { smashPot(game, en); continue; }
+    if (en.kind === 'boulder') { crumbleBoulder(game, en); continue; }
+    if (en.onStaffHit) { en.onStaffHit(game, en, false); continue; }   // snapper: bonked
+    if (!en.hittable || !en.hp) continue;
+    const ang = Math.atan2(en.y - e.y, en.x - e.x);
+    en.hp -= B.DMG;
+    en.flashT = COMBAT.FLASH_TIME;
+    en.squashT = COMBAT.SQUASH_TIME;
+    en.staggerT = COMBAT.STAGGER;
+    en.kbx = (en.kbx || 0) + Math.cos(ang) * COMBAT.KB_ENEMY;
+    en.kby = (en.kby || 0) + Math.sin(ang) * COMBAT.KB_ENEMY;
+    if (en.hp <= 0) {
+      if (en.kind === 'ogre') { en.dazedT = COMBAT.DAZED_TIME; en.atkState = 'none'; }
+      else defeatEnemy(game, en);
+    }
+  }
+
+  // cracked walls crumble (both dungeon doors and their pair open together)
+  if (Dungeon.active && Dungeon.cur) {
+    for (const d of Dungeon.cur.doors) {
+      const door = d.door;
+      if (door.type !== 'cracked' || door.state !== 'closed') continue;
+      const cx = (d.tx + 0.5) * TILE, cy = (d.ty + 0.5) * TILE;
+      if (dist2(cx, cy, e.x, e.y) > DUNGEON.BOMB.CRACK_RADIUS ** 2) continue;
+      door.state = 'open';
+      door.anim = 1;
+      game.burst(cx, cy, 12, PALETTE.dungeon.wall);
+      game.burst(cx, cy, 6, PALETTE.forest.stone);
+      game.shake(0.18, 0.014);
+      game.floatText(cx, cy - 30, 'the wall crumbles!');
+    }
+  }
+}
+
+function crumbleBoulder(game, en) {
+  game.bouldersOpened.add(en.idx);
+  game.burst(en.x, en.y - 10, 12, PALETTE.forest.stone);
+  game.burst(en.x, en.y - 10, 6, PALETTE.dungeon.wall);
+  game.shake(0.15, 0.012);
+  game.floatText(en.x, en.y - 34, 'crack!');
+  // a little hoard: trinkets, and a heart in the first boulder
+  const n = 4 + (en.idx === 0 ? 1 : 0);
+  for (let i = 0; i < n; i++) spawnPickup(game, en.x, en.y, 'trinket');
+  if (en.idx !== 1) spawnPickup(game, en.x, en.y, 'heart');
+  game.removeEntity(en);
+}
+
+// HUD blooms: under the hearts, in both modes
+function drawBloomHud(ctx, game) {
+  const B = game.bombs;
+  if (!B) return;
+  const S = Dungeon.spr;
+  const x0 = 30, y0 = 206;
+  for (let i = 0; i < B.cap; i++) {
+    ctx.globalAlpha = i < B.count ? 1 : 0.25;
+    ctx.drawImage(S.bloom.c, x0 + i * 26 - S.bloom.ax, y0 - S.bloom.ay);
+  }
+  ctx.globalAlpha = 1;
+  if (B.count < B.cap) {
+    // regrow progress: a tiny arc over the next empty bloom
+    ctx.strokeStyle = PALETTE.desert.blossom;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(x0 + B.count * 26, y0 - 8, 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (B.regrowT / DUNGEON.BOMB.REGROW));
+    ctx.stroke();
+  }
+}
+
+// touch: a blossom button above the attack half of the screen
+function bloomButtonHit(game, cx, cy) {
+  if (!game.bombs) return false;
+  const bx = innerWidth - 64, by = innerHeight - 150;
+  return (cx - bx) * (cx - bx) + (cy - by) * (cy - by) < 34 * 34;
+}
+
+function drawBloomButton(ctx, game) {
+  if (!game.bombs || !game.isTouchDevice) return;
+  const bx = innerWidth - 64, by = innerHeight - 150;
+  ctx.globalAlpha = 0.75;
+  ctx.fillStyle = PALETTE.forest.cream;
+  ctx.strokeStyle = PALETTE.forest.ink;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(bx, by, 32, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  const S = Dungeon.spr;
+  ctx.drawImage(S.bloom.c, bx - S.bloom.ax, by + 8 - S.bloom.ay);
+  ctx.globalAlpha = 1;
 }
 
 /* --- enemy AI --- */
@@ -1094,7 +1270,8 @@ function smashPot(game, e) {
   game.freeze(COMBAT.HITSTOP);
   game.burst(e.x, e.y - 10, DUNGEON.POT_SHARDS, PALETTE.forest.stone);
   game.burst(e.x, e.y - 10, 4, PALETTE.forest.cream);
-  if (e.drop < DUNGEON.POT_DROP_HEART) spawnPickup(game, e.x, e.y, 'heart');
+  if (e.bloomPot && game.bombs) spawnPickup(game, e.x, e.y, 'bloom');
+  else if (e.drop < DUNGEON.POT_DROP_HEART) spawnPickup(game, e.x, e.y, 'heart');
   else if (e.drop < DUNGEON.POT_DROP_TRINKET) spawnPickup(game, e.x, e.y, 'trinket');
   game.removeEntity(e);
 }
@@ -1566,8 +1743,10 @@ function updateDungeonMode(game, dt) {
     else if (e.kind === 'pebble') updatePebble(e, game, dt);
     else if (e.kind === 'gloomwing') updateGloomwing(e, game, dt);
     else if (e.kind === 'snapper') updateSnapper(e, game, dt);
+    else if (e.kind === 'bomb') updateBomb(e, game, dt);
   }
   checkRoomWiring(game);
+  updateBombItem(game, dt);
 
   updateDungeonAmbient(game, dt);
 }
@@ -1624,6 +1803,22 @@ function renderDungeon(ctx, game, alpha, vw, vh) {
   for (const room of visRooms) {
     for (const d of room.doors) {
       const door = d.door;
+      if (door.type === 'cracked' && door.state === 'open') {
+        // the crumbled hole: dark gap with rubble at its feet
+        const x = d.tx * TILE - ox, y = d.ty * TILE - oy;
+        ctx.fillStyle = DN.dark;
+        if (d.side === 'E' || d.side === 'W') ctx.fillRect(x - 2, y + 4, TILE + 4, TILE - 8);
+        else ctx.fillRect(x + 4, y - 2, TILE - 8, TILE + 4);
+        ctx.fillStyle = F.stone;
+        ctx.strokeStyle = F.ink; ctx.lineWidth = 1.6;
+        for (let i = 0; i < 3; i++) {
+          const rx = x + 8 + ((d.tx * 7 + i * 13) % (TILE - 16));
+          const ry = y + 8 + ((d.ty * 11 + i * 17) % (TILE - 16));
+          ctx.beginPath(); ctx.ellipse(rx, ry, 5 - i, 3.5 - i * 0.6, i, 0, Math.PI * 2);
+          ctx.fill(); ctx.stroke();
+        }
+        continue;
+      }
       if (door.type === 'open' || door.type === 'exit' || door.type === 'cracked' || door.type === 'ledge') continue;
       if (door.state === 'open' && door.anim >= 1) continue;
       const leaf = Dungeon.leaves[door.type === 'boss' ? 'boss' :
@@ -1708,6 +1903,8 @@ function renderDungeon(ctx, game, alpha, vw, vh) {
 
   drawRoomMapHud(ctx, game, vw);
   game.draw.hearts();
+  drawBloomHud(ctx, game);
+  drawBloomButton(ctx, game);
   if (game.touch.active) game.draw.joystick();
 
   if (game.deathT !== null) {
@@ -1798,7 +1995,22 @@ function drawDungeonEntity(c, e, alpha, ox, oy) {
     c.restore();
     return true;
   }
+  if (e.kind === 'bomb') { drawBombEntity(c, e, x, y); return true; }
   return false;
+}
+
+// shared with the overworld drawEntity path
+function drawBombEntity(c, e, x, y) {
+  const S = Dungeon.spr;
+  const late = e.age > DUNGEON.BOMB.FUSE - DUNGEON.BOMB.BLINK_LATE;
+  const blinkOn = ((e.age * (late ? 16 : 6)) | 0) % 2 === 0;
+  const img = blinkOn && e.age > DUNGEON.BOMB.THROW_T ? flashOf(S.bloom) : S.bloom.c;
+  c.drawImage(img, x - S.bloom.ax, y - S.bloom.ay);
+}
+
+function drawBoulderEntity(c, e, x, y) {
+  const S = Dungeon.spr;
+  c.drawImage(S.boulder.c, x - S.boulder.ax, y - S.boulder.ay);
 }
 
 // creature blit with the shared combat feedback (flash / squash / crouch pose)

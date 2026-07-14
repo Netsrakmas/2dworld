@@ -35,6 +35,19 @@ function worldInit(seedInt) {
     });
   }
   World.stumpSpot = findStumpSpot();
+  // cracked boulders: bomb-gated caches, visible from day one ("show the
+  // lock before the key"), scattered on dry land around the spawn
+  World.boulderSpots = [];
+  const br = mulberry32(seedInt ^ 0xB01D);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + br() * 1.4;
+    const rad = 13 + i * 6 + br() * 4;
+    World.boulderSpots.push({
+      tx: Math.round(Math.cos(a) * rad),
+      ty: Math.round(Math.sin(a) * rad),
+      idx: i,
+    });
+  }
 }
 
 // The Great Stump (dungeon entrance): the first comfortably-forest, dry spot
@@ -441,6 +454,15 @@ function genChunk(cx, cy) {
     if (stx === cx && sty === cy) {
       const p = findFreeTile(spot.tx, spot.ty, 6);
       if (p) chunk.entities.push({ kind: 'letter', tx: p[0], ty: p[1], idx: spot.idx });
+    }
+  }
+
+  // cracked boulders (bomb caches)
+  for (const spot of World.boulderSpots) {
+    const stx = Math.floor(spot.tx / CHUNK), sty = Math.floor(spot.ty / CHUNK);
+    if (stx === cx && sty === cy) {
+      const p = findFreeTile(spot.tx, spot.ty, 6);
+      if (p) chunk.entities.push({ kind: 'boulder', tx: p[0], ty: p[1], idx: spot.idx });
     }
   }
 

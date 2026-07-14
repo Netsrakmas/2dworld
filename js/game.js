@@ -85,8 +85,10 @@
   buildDungeon(seedInt);
   hudSeed.innerHTML = `<small>seed</small> ${seedStr.replace(/[<>&]/g, '')}`;
 
+  game.bouldersOpened = new Set();
   World.onSpawnEntity = (spec, chunk) => {
     if (spec.kind === 'letter' && game.collected.has(spec.idx)) return;
+    if (spec.kind === 'boulder' && game.bouldersOpened.has(spec.idx)) return;
     const e = spawnEntity(spec, chunk);
     game.entities.push(e);
     chunk.live = chunk.live || [];
@@ -111,6 +113,7 @@
     if (game.state === 'title' && (e.code === 'Enter' || e.code === 'Space' || e.code === 'KeyE')) startGame();
     else if (e.code === 'KeyE' || e.code === 'Enter') tryInteract();
     else if (e.code === 'Space' || e.code === 'KeyJ') queueAttack(game);
+    else if (e.code === 'KeyK' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') throwBomb(game);
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
   });
   addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -123,8 +126,9 @@
       game.touch.ox = e.clientX; game.touch.oy = e.clientY;
       game.touch.dx = 0; game.touch.dy = 0;
     } else {
-      // right-side tap: interact when something is near, otherwise bonk
-      if (nearestInteractable()) tryInteract();
+      // right-side tap: bloom button, else interact when something is near, else bonk
+      if (bloomButtonHit(game, e.clientX, e.clientY)) throwBomb(game);
+      else if (nearestInteractable()) tryInteract();
       else queueAttack(game);
     }
   });
@@ -280,7 +284,9 @@
       else if (e.kind === 'letter') updateLetter(e, game, dt);
       else if (e.kind === 'pickup') updatePickup(e, game, dt);
       else if (e.kind === 'stumpdoor') updateStumpDoor(e, game, dt);
+      else if (e.kind === 'bomb') updateBomb(e, game, dt);
     }
+    updateBombItem(game, dt);
     for (let i = game.rings.length - 1; i >= 0; i--) {
       game.rings[i].t += dt;
       if (game.rings[i].t > 0.35) game.rings.splice(i, 1);
@@ -470,7 +476,7 @@
     }
 
     drawMinimap(vw);
-    if (game.state === 'play') drawHearts();
+    if (game.state === 'play') { drawHearts(); drawBloomHud(ctx, game); drawBloomButton(ctx, game); }
     if (game.touch.active) drawJoystick();
     if (game.state === 'title') drawTitle(vw, vh);
 
@@ -755,9 +761,13 @@
         ctx.fill();
       }
     } else if (e.kind === 'pickup') {
-      const spr = e.ptype === 'heart' ? SPRITES.heart : SPRITES.trinket;
+      const spr = e.ptype === 'heart' ? SPRITES.heart : e.ptype === 'bloom' ? Dungeon.spr.bloom : SPRITES.trinket;
       const bob = Math.sin(e.bobT * 3) * 2.5;
       ctx.drawImage(spr.c, x - spr.ax, y - spr.ay + bob);
+    } else if (e.kind === 'bomb') {
+      drawBombEntity(ctx, e, x, y);
+    } else if (e.kind === 'boulder') {
+      drawBoulderEntity(ctx, e, x, y);
     } else if (e.kind === 'sign') {
       const spr = SPRITES.sign;
       ctx.drawImage(spr.c, x - spr.ax, y - spr.ay);

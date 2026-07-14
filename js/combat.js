@@ -316,6 +316,9 @@ function updatePickup(e, game, dt) {
     if (e.ptype === 'heart') {
       p.hp = Math.min(COMBAT.MAX_HP, p.hp + COMBAT.HEART_HEAL);
       game.floatText(p.x, p.y - 40, '+1 heart');
+    } else if (e.ptype === 'bloom') {
+      if (game.bombs) game.bombs.count = Math.min(game.bombs.cap, game.bombs.count + 1);
+      game.floatText(p.x, p.y - 40, '+1 bloom');
     } else {
       game.trinkets++;
       game.updateTrinketHud();
