@@ -32,7 +32,12 @@ function serializeGame(game, seedStr) {
     camp: game.camp || null,
     dungeons: Dungeon.defs.map((d) => ({
       keys: d.keys, bossKey: d.bossKey,
-      doors: [...d.doors].map(([k, dr]) => [k, dr.state]),
+      // persist door UNLOCKS only — never closed states. Combat shutters are
+      // closed while a fight is live; an autosave landing mid-fight must not
+      // seal that room shut forever on reload (it did: the Pebblit Den's
+      // hub door came back closed with no way to open it).
+      doors: [...d.doors].filter(([, dr]) => dr.state === 'open' && dr.type !== 'open' && dr.type !== 'exit')
+        .map(([k]) => k),
       flags: {
         latched: [...d.flags.latched],
         chests: [...d.flags.chests],
@@ -65,9 +70,14 @@ function applySave(game, data) {
     if (!d) return;
     d.keys = sd.keys | 0;
     d.bossKey = !!sd.bossKey;
-    for (const [k, st] of sd.doors || []) {
-      const dr = d.doors.get(k);
-      if (dr) { dr.state = st; dr.anim = st === 'open' ? 1 : 0; }
+    for (const entry of sd.doors || []) {
+      // new format: plain door keys (unlocked doors). Old saves stored
+      // [key, state] pairs — apply only their 'open' entries, so a stale
+      // save with a closed shutter self-heals to the built default.
+      const key = Array.isArray(entry) ? entry[0] : entry;
+      const st = Array.isArray(entry) ? entry[1] : 'open';
+      const dr = d.doors.get(key);
+      if (dr && st === 'open') { dr.state = 'open'; dr.anim = 1; }
     }
     const f = sd.flags || {};
     d.flags.latched = new Set(f.latched || []);
