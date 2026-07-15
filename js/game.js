@@ -124,8 +124,7 @@
   addEventListener('keydown', (e) => {
     keys[e.code] = true;
     if (game.state === 'title' && e.code === 'KeyN' && game.saveLoaded) {
-      clearSave(seedStr);
-      location.reload();
+      startOver();
     }
     else if (game.state === 'title' && (e.code === 'Enter' || e.code === 'Space' || e.code === 'KeyE')) startGame();
     else if (e.code === 'KeyE' || e.code === 'Enter') {
@@ -139,7 +138,14 @@
   addEventListener('keyup', (e) => { keys[e.code] = false; });
 
   canvas.addEventListener('pointerdown', (e) => {
-    if (game.state === 'title') { startGame(); return; }
+    if (game.state === 'title') {
+      const b = game.titleBtn;
+      if (b && e.clientX >= b.x && e.clientX <= b.x + b.w &&
+          e.clientY >= b.y && e.clientY <= b.y + b.h) {
+        startOver();
+      } else startGame();
+      return;
+    }
     if (e.clientX < innerWidth * 0.55) {
       game.touch.active = true;
       game.touch.id = e.pointerId;
@@ -169,6 +175,17 @@
   };
   canvas.addEventListener('pointerup', endTouch);
   canvas.addEventListener('pointercancel', endTouch);
+
+  // erasing a tale takes two presses: the first asks, the second acts
+  function startOver() {
+    if (!game.titleConfirm) {
+      game.titleConfirm = game.time + 4;   // the question expires after 4s
+      sfx('page');
+      return;
+    }
+    clearSave(seedStr);
+    location.reload();
+  }
 
   function startGame() {
     game.state = 'play';
@@ -983,19 +1000,34 @@
   }
 
   function drawTitle(vw, vh) {
-    ctx.fillStyle = withAlpha(PALETTE.forest.ink, 0.25);
+    ctx.fillStyle = withAlpha(PALETTE.forest.ink, 0.22);
     ctx.fillRect(0, 0, vw, vh);
-    const cw = Math.min(460, vw - 40), chh = 210;
+    const save = game.saveLoaded;
+    const cw = Math.min(460, vw - 40);
+    const hh = save ? 168 : 138;               // card half-height
     const cx = vw / 2, cy = vh / 2;
+    if (game.titleConfirm && game.time > game.titleConfirm) game.titleConfirm = 0;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(-0.01);
     ctx.fillStyle = PALETTE.forest.cream;
     ctx.strokeStyle = PALETTE.forest.ink;
     ctx.lineWidth = 3.5;
-    ctx.beginPath(); ctx.roundRect(-cw / 2, -chh / 2, cw, chh, 16);
+    ctx.beginPath(); ctx.roundRect(-cw / 2, -hh, cw, hh * 2, 16);
     ctx.fill(); ctx.stroke();
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    // the wanderer, boiling away above the title
+    {
+      const boil = ((game.time * 8) | 0) % 2;
+      const spr = SPRITES.player.forest[0][0][boil];
+      const sc = 1.7;
+      const breathe = Math.sin(game.time * (Math.PI * 2 / 3.4)) * 0.02;
+      ctx.save();
+      ctx.translate(0, -hh + 106);
+      ctx.scale(sc * (1 - breathe), sc * (1 + breathe));
+      ctx.drawImage(spr.c, -spr.ax, -spr.ay);
+      ctx.restore();
+    }
     // hand-lettered title: each glyph gets its own tiny tilt
     const title = 'TWO WORLDS';
     ctx.font = `bold ${Math.min(52, cw / 9)}px Georgia, serif`;
@@ -1006,7 +1038,7 @@
     for (const chGlyph of title) {
       const w = ctx.measureText(chGlyph).width;
       ctx.save();
-      ctx.translate(x + w / 2, -34 + (jr() - 0.5) * 5);
+      ctx.translate(x + w / 2, -hh + 150 + (jr() - 0.5) * 5);
       ctx.rotate((jr() - 0.5) * 0.09);
       ctx.fillText(chGlyph, 0, 0);
       ctx.restore();
@@ -1014,19 +1046,44 @@
     }
     ctx.font = 'italic 17px Georgia, serif';
     ctx.fillStyle = withAlpha(PALETTE.forest.ink, 0.75);
-    ctx.fillText('a wanderer’s tale in flat sand and wobbly ink', 0, 14);
+    ctx.fillText('a wanderer’s tale in flat sand and wobbly ink', 0, -hh + 182);
+    if (save) {
+      // the tale so far
+      const p = game.player;
+      ctx.font = '14px Georgia, serif';
+      ctx.fillStyle = withAlpha(PALETTE.forest.ink, 0.85);
+      ctx.fillText(`your tale so far — ✉ ${game.collected.size}/5 letters · ✦ ${game.trinkets} trinkets · ❤ ${p.maxHp / 2} hearts`,
+        0, -hh + 212);
+    }
     ctx.font = 'bold 16px Georgia, serif';
     ctx.fillStyle = PALETTE.forest.ink;
     const blink = Math.sin(game.time * 3) > -0.3;
     if (blink) {
       ctx.fillText(game.isTouchDevice
-        ? (game.saveLoaded ? 'tap to continue' : 'tap to begin')
-        : (game.saveLoaded ? 'press Enter to continue' : 'press Enter to begin'), 0, 62);
+        ? (save ? 'tap to continue' : 'tap to begin')
+        : (save ? 'press Enter to continue' : 'press Enter to begin'), 0, -hh + (save ? 244 : 226));
     }
-    if (game.saveLoaded && !game.isTouchDevice) {
-      ctx.font = 'italic 13px Georgia, serif';
-      ctx.fillStyle = withAlpha(PALETTE.forest.ink, 0.6);
-      ctx.fillText('N for a new tale', 0, 86);
+    if (save) {
+      // the start-over button (two taps: the first asks, the second erases)
+      const bw = 210, bh = 36, by = -hh + 270;
+      const confirm = !!game.titleConfirm;
+      ctx.fillStyle = confirm ? PALETTE.forest.letterStamp : PALETTE.forest.cream;
+      ctx.strokeStyle = PALETTE.forest.ink;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.roundRect(-bw / 2, by, bw, bh, 10);
+      ctx.fill(); ctx.stroke();
+      ctx.font = confirm ? 'bold 14px Georgia, serif' : '14px Georgia, serif';
+      ctx.fillStyle = confirm ? PALETTE.forest.cream : PALETTE.forest.ink;
+      ctx.fillText(confirm ? 'really? erase the tale' : 'start over ↺', 0, by + bh / 2 + 1);
+      // screen-space hit box (card rotation is 0.6°: negligible for hits)
+      game.titleBtn = { x: cx - bw / 2, y: cy + by, w: bw, h: bh };
+      if (!game.isTouchDevice) {
+        ctx.font = 'italic 12px Georgia, serif';
+        ctx.fillStyle = withAlpha(PALETTE.forest.ink, 0.55);
+        ctx.fillText('(or press N)', 0, by + bh + 16);
+      }
+    } else {
+      game.titleBtn = null;
     }
     ctx.restore();
   }
@@ -1045,7 +1102,15 @@
     let steps = 0;
     while (acc >= STEP && steps < 4) {
       if (game.state === 'play') update(STEP);
-      else game.time += STEP;
+      else {
+        // title: the world lives behind the card — slow camera drift over
+        // the spawn borderlands with clouds and wind still breathing
+        game.time += STEP;
+        const t = game.time * 0.045;
+        game.cam.x = game.cam.px = Math.sin(t) * 260 + Math.sin(t * 0.37) * 140;
+        game.cam.y = game.cam.py = Math.cos(t * 0.8) * 200;
+        updateAtmos(game, STEP);
+      }
       acc -= STEP;
       steps++;
     }
