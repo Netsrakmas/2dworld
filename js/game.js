@@ -74,6 +74,7 @@
   };
 
   function showDialog(html) {
+    game.npcDialog = null;   // any fresh dialog replaces an open paged conversation
     dialogEl.innerHTML = html;
     dialogEl.classList.add('show');
     game.dialogTimer = 7;
@@ -84,6 +85,7 @@
   buildSprites(seedInt);
   buildDungeon(seedInt);
   buildAtmos(seedInt);
+  buildNpcs(seedInt);
   hudSeed.innerHTML = `<small>seed</small> ${seedStr.replace(/[<>&]/g, '')}`;
 
   game.bouldersOpened = new Set();
@@ -112,7 +114,9 @@
   addEventListener('keydown', (e) => {
     keys[e.code] = true;
     if (game.state === 'title' && (e.code === 'Enter' || e.code === 'Space' || e.code === 'KeyE')) startGame();
-    else if (e.code === 'KeyE' || e.code === 'Enter') tryInteract();
+    else if (e.code === 'KeyE' || e.code === 'Enter') {
+      if (!advanceNpcDialog(game)) tryInteract();   // paged NPC dialog eats E first
+    }
     else if (e.code === 'Space' || e.code === 'KeyJ') queueAttack(game);
     else if (e.code === 'KeyK' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') throwBomb(game);
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
@@ -129,6 +133,7 @@
     } else {
       // right-side tap: bloom button, else interact when something is near, else bonk
       if (bloomButtonHit(game, e.clientX, e.clientY)) throwBomb(game);
+      else if (advanceNpcDialog(game)) { /* consumed by a paged conversation */ }
       else if (nearestInteractable()) tryInteract();
       else queueAttack(game);
     }
@@ -289,6 +294,9 @@
       else if (e.kind === 'stumpdoor') updateStumpDoor(e, game, dt);
       else if (e.kind === 'skulldoor') updateSkullDoor(e, game, dt);
       else if (e.kind === 'bomb') updateBomb(e, game, dt);
+      else if (e.kind === 'npc') updateNpc(e, game, dt);
+      else if (e.kind === 'pedestal') updatePedestal(e, game, dt);
+      else if (e.kind === 'campfire') updateCampfire(e, game, dt);
     }
     updateBombItem(game, dt);
     updateEndingCard(game, dt);
@@ -803,6 +811,8 @@
       drawBombEntity(ctx, e, x, y);
     } else if (e.kind === 'boulder') {
       drawBoulderEntity(ctx, e, x, y);
+    } else if (e.kind === 'npc' || e.kind === 'pedestal' || e.kind === 'campfire') {
+      drawCampEntity(ctx, game, e, x, y, boil);
     } else if (e.kind === 'sign') {
       const spr = SPRITES.sign;
       ctx.drawImage(spr.c, x - spr.ax, y - spr.ay);
@@ -873,6 +883,30 @@
         ctx.fillStyle = PALETTE.dungeon.dark;
         ctx.beginPath(); ctx.arc(kx, ky + 0.8, 1.4, 0, Math.PI * 2); ctx.fill();
       }
+    }
+    // the Waystone Camp (a warm dot of fire)
+    if (World.campSpot) {
+      const wc = World.campSpot;
+      const wx = mx + size / 2 + (wc.tx * TILE - p.x) / (TILE * CELL) * scale;
+      const wy = my + size / 2 + (wc.ty * TILE - p.y) / (TILE * CELL) * scale;
+      if (wx >= mx + 5 && wx <= mx + size - 5 && wy >= my + 5 && wy <= my + size - 5) {
+        ctx.fillStyle = PALETTE.dungeon.torchFlame;
+        ctx.strokeStyle = PALETTE.forest.ink;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc(wx, wy, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+    }
+    // Maple's fortune ping: a pulsing golden ring, clamped to the map edge
+    if (game.hintPing && game.time < game.hintPing.until) {
+      const hp2 = game.hintPing;
+      const hx = clamp(mx + size / 2 + (hp2.tx * TILE - p.x) / (TILE * CELL) * scale, mx + 8, mx + size - 8);
+      const hy = clamp(my + size / 2 + (hp2.ty * TILE - p.y) / (TILE * CELL) * scale, my + 8, my + size - 8);
+      const pulse = 3.5 + Math.sin(game.time * 5) * 1.8;
+      ctx.strokeStyle = PALETTE.fx.trinket;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(hx, hy, pulse, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = PALETTE.fx.trinket;
+      ctx.beginPath(); ctx.arc(hx, hy, 1.6, 0, Math.PI * 2); ctx.fill();
     }
     // player
     ctx.fillStyle = PALETTE.forest.ink;
@@ -963,6 +997,7 @@
   };
   game.showDialog = showDialog;
   game.readInput = readInput;
+  game.nightFactor = nightFactor;
 
   // warm the spawn area, then go
   getChunk(0, 0); getChunk(-1, 0); getChunk(0, -1); getChunk(-1, -1);

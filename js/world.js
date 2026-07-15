@@ -43,6 +43,7 @@ function worldInit(seedInt) {
       idx: i,
     });
   }
+  World.campSpot = findCampSpot();
   World.stumpSpot = findStumpSpot();
   World.skullSpot = findSkullSpot();
   // cracked boulders: bomb-gated caches, visible from day one ("show the
@@ -58,6 +59,30 @@ function worldInit(seedInt) {
       idx: i,
     });
   }
+}
+
+// The Waystone Camp (the NPC cast): the first dry spot ON the biome border —
+// blend 0.4-0.6, a comfortable walk from spawn, clear of chunk edges so the
+// whole camp's solids land in one chunk. Pure function of the noise.
+function findCampSpot() {
+  for (let rad = 9; rad <= 28; rad += 2) {
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2 + 0.07;
+      const tx = Math.round(Math.cos(a) * rad), ty = Math.round(Math.sin(a) * rad);
+      const bl = blendAtTile(tx, ty);
+      if (bl < 0.4 || bl > 0.6) continue;
+      const mx = ((tx % CHUNK) + CHUNK) % CHUNK, my = ((ty % CHUNK) + CHUNK) % CHUNK;
+      if (mx < 6 || mx > 25 || my < 4 || my > 27) continue;
+      let ok = true;
+      for (let dy = -3; ok && dy <= 3; dy++) {
+        for (let dx = -6; ok && dx <= 5; dx++) {
+          if (isWaterTile(tx + dx, ty + dy)) ok = false;
+        }
+      }
+      if (ok) return { tx, ty };
+    }
+  }
+  return { tx: 12, ty: 4 };
 }
 
 // The Great Stump (dungeon entrance): the first comfortably-forest, dry spot
@@ -165,9 +190,10 @@ function landmarkFeature(lrx, lry) {
   let type = null;
   if (roll < 0.62 && Math.hypot(tx, ty) > 12) {
     const bl = blendAtTile(tx, ty);
-    const s = World.stumpSpot, k = World.skullSpot;
+    const s = World.stumpSpot, k = World.skullSpot, wc = World.campSpot;
     const nearStump = (s && Math.hypot(tx - s.tx, ty - s.ty) < 12) ||
-                      (k && Math.hypot(tx - k.tx, ty - k.ty) < 12);
+                      (k && Math.hypot(tx - k.tx, ty - k.ty) < 12) ||
+                      (wc && Math.hypot(tx - wc.tx, ty - wc.ty) < 12);
     if (!nearStump && !isWaterTile(tx, ty) && !inCampClearing(tx, ty)) {
       if (bl < 0.4) type = pick < 0.42 ? 'rocktrio' : pick < 0.72 ? 'cactusring' : pick < 0.92 ? 'ribcage' : 'greatskull';
       else if (bl > 0.6) type = pick < 0.38 ? 'cairn' : pick < 0.68 ? 'fairyring' : pick < 0.92 ? 'stones' : 'greattree';
@@ -488,6 +514,8 @@ function tileFreeForProp(wtx, wty) {
   if (s && Math.hypot(wtx - s.tx, wty - s.ty) < 6) return false; // stump apron
   const k = World.skullSpot;
   if (k && Math.hypot(wtx - k.tx, wty - k.ty) < 7) return false; // skull apron
+  const wc = World.campSpot;
+  if (wc && Math.hypot(wtx - wc.tx, wty - wc.ty) < 8) return false; // Waystone Camp clearing
   if (inLandmarkApron(wtx, wty)) return false; // set pieces clear their stage
   if (nearPath(wtx, wty, 1.3)) return false;   // desire paths stay walkable
   return true;
@@ -779,6 +807,14 @@ function genChunk(cx, cy) {
         }
       }
       chunk.entities.push({ kind: 'skulldoor', tx: k.tx, ty: k.ty });
+    }
+  }
+
+  // the Waystone Camp — NPC cast + shop pedestals around a fire
+  {
+    const wc = World.campSpot;
+    if (wc && Math.floor(wc.tx / CHUNK) === cx && Math.floor(wc.ty / CHUNK) === cy) {
+      spawnWaystoneCamp(chunk, wc, addProp, (tx, ty) => markSolid(chunk, tx - baseTx, ty - baseTy));
     }
   }
 

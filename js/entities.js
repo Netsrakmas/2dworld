@@ -80,10 +80,16 @@ function spawnEntity(spec, chunk) {
       e.interact = { text: 'The watcher watches. You watch back. A draw.', label: 'stare' };
       break;
     case 'sign': {
+      if (spec.text) { e.interact = { text: spec.text, label: 'read' }; break; }
       const r = rng2(spec.tx, spec.ty, World.seedInt ^ 0x516);
       e.interact = { text: SIGN_TEXTS[(r() * SIGN_TEXTS.length) | 0], label: 'read' };
       break;
     }
+    case 'npc':
+    case 'pedestal':
+    case 'campfire':
+      initCampEntity(e, spec);   // js/npcs.js
+      break;
     case 'letter':
       e.idx = spec.idx;
       e.bobT = Math.random() * 6;

@@ -429,3 +429,23 @@ Upgrade the hooded wanderer from "reads correctly" to "the charming thing you ca
 - **Idle breathing:** scaleY 1.025 at a 3.4s period, pivoted at the feet, X counter-scaled — applied at draw time in `drawPlayer`, never baked.
 
 **Acceptance:** all four facings distinguishable in freeze-frame; walk reads as stepping, not bobbing; the scarf is the brightest saturated element on screen; both biome treatments intact (ink outline forest / flat + offset shadow desert); 60 fps; zero console errors; combat/staff visuals unchanged.
+
+
+---
+
+## THE NPC UPDATE (feature-addition prompt — the world gets faces)
+
+Add a small cast where the two biomes meet. Recipe from the research (RESEARCH.md §11): each NPC = one name + one visual quirk + one mechanical function; every one gets lines that change with real progress.
+
+**Map of what exists:** dialog box in `index.html`/`game.js` (`showDialog`, 7s timer); trinkets are a counter with no sink; deterministic spots pattern in `js/world.js` (stump/skull/boulders). New logic in `js/npcs.js`. Do NOT touch combat, dungeons, or worldgen algorithms (additive placement only).
+
+**The Waystone Camp** — seeded on the biome border near spawn (blend 0.4-0.6, dry, ≥9 tiles out): a campfire, a barrel, a sign, and three storybook critters:
+- **Fennel** (hedgehog, oversized backpack) — the shop: 3 pedestals, Zelda-1 style walk-up + [E] price tag + [E] confirm. Ladder vs trinket drip: **heart snack 8** (full heal, restocks), **bloom pouch 60** (bombs cap +2, once — restocks as a 12-trinket spare-bloom bundle), **heart container 200** (the aspirational anchor; +1 max heart, once). Different line when you can't afford it.
+- **Maple** (badger granny, shawl + basket) — rumors free, **fortune 15 trinkets**: names the player's actual next undone thing in landmark-relative storybook phrasing (never coordinates) + bundles a full heal (ALttP fortune-teller rule: a paid hint never feels wasted) + pings the minimap for 45s.
+- **Pip** (snail bard) — pure charm: hums with note particles, lines keyed to wind gusts/night/biome; spins if bonked.
+
+**Dialog upgrade:** paged conversations — ≤ ~110 chars per page, [E] advances, ▼ glyph when more pages, tinted speaker name tag per NPC (the A Short Hike color-voice trick); the 7s auto-dismiss stays for ambient barks only.
+
+**Aliveness:** NPCs turn to face the player in range, '!' bubble when they have unseen-phase dialog ('…' otherwise), idle fidget bob; ≥2 line variants per story phase (pre-bombs / post-stump-boss / post-den or hat) so the world visibly notices progress.
+
+**Acceptance:** all three NPCs interactable with paged, state-aware dialog; all three wares purchasable with correct deduction/refusal; fortune targets the real next objective and pings the minimap; camp deterministic per seed; 60fps; zero console errors; prior suites green.
