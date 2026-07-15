@@ -210,17 +210,22 @@ const DUNGEON_ROOMS = [
     '#.............#',
     '###############',
   ]},
+  // Two blocks on the open middle lane, each with its own push route:
+  // left block goes right then up (stand below at 6,6), right block goes
+  // left then down (stand above at 8,4). The old layout was unsolvable —
+  // one block for two switches, trapped on the bottom row where no tile
+  // exists to stand on and push it upward.
   { key: '4,2', name: 'The Switch Maze', map: [
     '###############',
     '#.............#',
     '#...#######...#',
     '#...#.....#...#',
-    '#...#..s..#...#',
-    '#.............#',
-    '#...#..s..#...#',
+    '#...#.s...#...#',
+    '#....B...B....#',
+    '#...#...s.#...#',
     '#...#.....#...#',
     '#...##.####...#',
-    '#......B......#',
+    '#.............#',
     '###############',
   ]},
   { key: '3,1', name: 'The High Shelf', map: [
