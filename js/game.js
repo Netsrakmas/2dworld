@@ -98,6 +98,14 @@
     chunk.live.push(e);
   };
 
+  // saves: restore a matching slot BEFORE any chunk generates, so collected
+  // letters and opened boulders never respawn
+  game.saveLoaded = initSaveSystem(game, seedStr);
+  if (game.saveLoaded) {
+    hudLetters.innerHTML = `&#9993; ${game.collected.size} / 5 letters`;
+    game.updateTrinketHud();
+  }
+
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     canvas.width = Math.round(innerWidth * dpr);
@@ -113,7 +121,11 @@
   const keys = {};
   addEventListener('keydown', (e) => {
     keys[e.code] = true;
-    if (game.state === 'title' && (e.code === 'Enter' || e.code === 'Space' || e.code === 'KeyE')) startGame();
+    if (game.state === 'title' && e.code === 'KeyN' && game.saveLoaded) {
+      clearSave(seedStr);
+      location.reload();
+    }
+    else if (game.state === 'title' && (e.code === 'Enter' || e.code === 'Space' || e.code === 'KeyE')) startGame();
     else if (e.code === 'KeyE' || e.code === 'Enter') {
       if (!advanceNpcDialog(game)) tryInteract();   // paged NPC dialog eats E first
     }
@@ -157,7 +169,11 @@
 
   function startGame() {
     game.state = 'play';
-    showDialog('Find the <b>5 lost letters</b> scattered across the two worlds.<span class="hint">WASD / arrows to walk &middot; E to interact &middot; Space to bonk</span>');
+    if (game.saveLoaded) {
+      showDialog('Welcome back, wanderer. The worlds kept your place.<span class="hint">WASD / arrows to walk &middot; E to interact &middot; Space to bonk</span>');
+    } else {
+      showDialog('Find the <b>5 lost letters</b> scattered across the two worlds.<span class="hint">WASD / arrows to walk &middot; E to interact &middot; Space to bonk</span>');
+    }
   }
 
   function nearestInteractable() {
@@ -965,7 +981,16 @@
     ctx.font = 'bold 16px Georgia, serif';
     ctx.fillStyle = PALETTE.forest.ink;
     const blink = Math.sin(game.time * 3) > -0.3;
-    if (blink) ctx.fillText(game.isTouchDevice ? 'tap to begin' : 'press Enter to begin', 0, 62);
+    if (blink) {
+      ctx.fillText(game.isTouchDevice
+        ? (game.saveLoaded ? 'tap to continue' : 'tap to begin')
+        : (game.saveLoaded ? 'press Enter to continue' : 'press Enter to begin'), 0, 62);
+    }
+    if (game.saveLoaded && !game.isTouchDevice) {
+      ctx.font = 'italic 13px Georgia, serif';
+      ctx.fillStyle = withAlpha(PALETTE.forest.ink, 0.6);
+      ctx.fillText('N for a new tale', 0, 86);
+    }
     ctx.restore();
   }
 
