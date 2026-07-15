@@ -64,6 +64,7 @@
   game.collectLetter = (e) => {
     if (game.collected.has(e.idx)) return;
     game.collected.add(e.idx);
+    sfx('letter');
     game.entities.splice(game.entities.indexOf(e), 1);
     game.burst(e.x, e.y - 10, 16, PALETTE.forest.letterStamp);
     game.burst(e.x, e.y - 10, 8, PALETTE.forest.cream);
@@ -131,6 +132,7 @@
     }
     else if (e.code === 'Space' || e.code === 'KeyJ') queueAttack(game);
     else if (e.code === 'KeyK' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') throwBomb(game);
+    else if (e.code === 'KeyM') toggleMute(game);
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
   });
   addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -169,10 +171,11 @@
 
   function startGame() {
     game.state = 'play';
+    sfx('title');
     if (game.saveLoaded) {
-      showDialog('Welcome back, wanderer. The worlds kept your place.<span class="hint">WASD / arrows to walk &middot; E to interact &middot; Space to bonk</span>');
+      showDialog('Welcome back, wanderer. The worlds kept your place.<span class="hint">WASD / arrows to walk &middot; E to interact &middot; Space to bonk &middot; M for quiet</span>');
     } else {
-      showDialog('Find the <b>5 lost letters</b> scattered across the two worlds.<span class="hint">WASD / arrows to walk &middot; E to interact &middot; Space to bonk</span>');
+      showDialog('Find the <b>5 lost letters</b> scattered across the two worlds.<span class="hint">WASD / arrows to walk &middot; E to interact &middot; Space to bonk &middot; M for quiet</span>');
     }
   }
 
@@ -282,6 +285,7 @@
       if (p.stepAcc > 0.25) {
         p.stepAcc = 0;
         const bl = blendAtTile(Math.floor(p.x / TILE), Math.floor(p.y / TILE));
+        sfx('step', bl);
         const col = bl < 0.5 ? PALETTE.desert.sandSpeckle : PALETTE.forest.groundSpeckle;
         for (let i = 0; i < 5; i++) {
           emitParticle(game.particles, p.x + (Math.random() - 0.5) * 10, p.y - 2,
@@ -999,6 +1003,7 @@
   let acc = 0;
   function frame(now) {
     requestAnimationFrame(frame);
+    updateAudio(game);   // ambient scheduler runs on wall clock, mode-agnostic
     let dt = (now - last) / 1000;
     last = now;
     if (dt > 0.1) dt = 0.1;

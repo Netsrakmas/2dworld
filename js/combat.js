@@ -87,6 +87,7 @@ function queueAttack(game) {
 function startSwing(game) {
   const p = game.player;
   p.swing = COMBAT.SWINGS[p.combo];
+  sfx('swing');
   p.attackState = 'windup';
   p.attackT = p.swing.windup;
   p.attackAngle = DIR_ANGLE[p.dir];
@@ -212,6 +213,7 @@ function hitEnemy(game, e, finisher) {
   if (e.kind === 'watcher') {
     // unkillable, but reactive: spin + first-bonk trinkets
     e.spinT = 0.45;
+    sfx('tink');
     game.freeze(COMBAT.HITSTOP);
     game.burst(e.x, e.y - 14, 8, PALETTE.fx.trinket);
     if (!e.bonked) {
@@ -225,6 +227,7 @@ function hitEnemy(game, e, finisher) {
   const dmg = p.swing.dmg;
   const kb = COMBAT.KB_ENEMY * (finisher ? COMBAT.KB_FINISHER_MULT : 1);
   if (finisher) game.shake(0.12, 0.01);
+  sfx(finisher ? 'finisher' : 'hit');
   e.hp -= dmg;
   e.flashT = COMBAT.FLASH_TIME;
   e.squashT = COMBAT.SQUASH_TIME;
@@ -253,6 +256,7 @@ function hitEnemy(game, e, finisher) {
 
 function defeatEnemy(game, e) {
   const F = PALETTE.forest;
+  sfx('poof');
   game.burst(e.x, e.y - 12, 12, F.canopyMid);
   game.burst(e.x, e.y - 12, 8, PALETTE.fx.flash);
   if (e.kind === 'ogre') {
@@ -271,6 +275,7 @@ function defeatEnemy(game, e) {
 function damagePlayer(game, amount, fromX, fromY) {
   const p = game.player;
   if (p.iFrameT > 0 || game.deathT !== null) return;
+  sfx('hurt');
   p.hp -= amount;
   p.iFrameT = COMBAT.IFRAMES;
   p.hurtLockT = COMBAT.HURT_LOCK;
@@ -315,12 +320,15 @@ function updatePickup(e, game, dt) {
   if (d < 15 && e.age > 0.15) {
     if (e.ptype === 'heart') {
       p.hp = Math.min(p.maxHp || COMBAT.MAX_HP, p.hp + COMBAT.HEART_HEAL);
+      sfx('heart');
       game.floatText(p.x, p.y - 40, '+1 heart');
     } else if (e.ptype === 'bloom') {
       if (game.bombs) game.bombs.count = Math.min(game.bombs.cap, game.bombs.count + 1);
+      sfx('trinket');
       game.floatText(p.x, p.y - 40, '+1 bloom');
     } else {
       game.trinkets++;
+      sfx('trinket');
       game.updateTrinketHud();
       game.floatText(e.x, e.y - 24, '+1');
     }

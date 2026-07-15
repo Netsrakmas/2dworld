@@ -144,3 +144,17 @@ Key added sources: zeldadungeon.net LA character analysis + Town Tool Shop · MC
 ## Key sources
 
 levels.io / @levelsio fly.pieter.com thread · github.com/EnzeD/vibe-coding · github.com/cpjet64/vibecoding prompt-engineering guide · github.com/PlayableIntelligence/game-creator · github.com/majidmanzarpour/threejs-game-skills · XDA-Developers "vibe coded a game with Claude Code" · harrynesbitt.com (Making of Alto's Adventure) · finji.co/games/overland · mexer.pigsell.com (Max Fiedler) · roughjs.com + shihn.ca/posts/2020/roughjs-algorithms · redblobgames.com/maps/terrain-from-noise · MDN Tilemaps & globalCompositeOperation · tympanus.net Codrops feTurbulence guide · camillovisini.com hand-drawn SVG motion · wertn.com Sylvain Tegroeg interview · valdemird.com game-feel-on-the-web · gamejuice.co.uk · designmodo.com long-shadows · mlpds.art hue-shifting guide · 2dwillneverdie.com sprite colors
+
+
+---
+
+## §12 addendum — procedural WebAudio (the sound update)
+
+Sources: MDN Advanced Techniques, web.dev "A tale of two clocks", noisehack (Paul Kellet pink filter), IRCAM/gskinner feedback-delay reverb recipes, Chrome autoplay policy, Bainter generative.fm writeups, padenot web-audio-perf, ZzFX param model.
+
+- **Fire-and-forget voices:** osc/buffer → gain envelope → lowpass → bus; `stop()` scheduled ⇒ nodes GC themselves. Never ramp gain to true 0 (breaks exponential); floor at 0.0001. Attack ≥3 ms kills clicks.
+- **Noise:** build 2 s white + pink buffers ONCE; every shot is a new `AudioBufferSourceNode` over the shared buffer (sources are one-shot, buffers are not). Pink = organic (steps, poofs, booms, wind); white = airy (whoosh, ching, fuse).
+- **Reverb without files:** feedback delay loop (delay 0.25-0.35 s, feedback 0.3-0.4, lowpass 1800-2500 INSIDE the loop so echoes darken); two parallel taps at a non-integer ratio (0.27/0.41) kill flutter. Wet 0.15-0.25.
+- **Mix:** master 0.8, sfx 0.9, music 0.30 (≈ −10 dB under SFX); compressor −18/25/6/3ms/250ms absorbs pile-ups; per-name retrigger throttle + ±10% gain jitter prevents phase-stacked doubling; ~16-24 voice cap is mobile-safe.
+- **Autoplay:** create the context on first trusted gesture (pointerdown/keydown/touchend) and `resume()`; re-resume on visibilitychange. Creating it at page load logs a console warning — lazy creation avoids even that.
+- **Generative ambient:** per-voice independent timers (Music-for-Airports model), 2-8 s melody / 12-25 s drone / 9-20 s sparkle; C-major pentatonic = the storybook default, C-minor pentatonic shares the root for dungeon crossfades; detune ±6 cents = free chorus (>15 = seasick); ducking down τ50 ms, up τ300 ms; rAF-driven scheduling is fine at these timescales and pauses with the tab.

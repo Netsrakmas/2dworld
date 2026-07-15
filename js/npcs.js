@@ -256,6 +256,7 @@ function initCampEntity(e, spec) {
       e.hp = 999;
       e.onStaffHit = (game, en) => {
         en.spinT = 0.7;
+        sfx('pipNote');
         game.freeze(0.04);
         game.burst(en.x, en.y - 12, 10, PALETTE.desert.blossomLight);
         game.floatText(en.x, en.y - 30, '♪!');
@@ -294,6 +295,7 @@ function npcSay(game, npc, pages, armFortune) {
 
 function showNpcPage(game, d) {
   const more = d.idx < d.pages.length - 1;
+  sfx('page');
   game.showDialog(npcTag(d.npc) + d.pages[d.idx] +
     (more ? ' <span class="hint">▼ E</span>' : ''));
   game.dialogTimer = NPC.PAGE_TIMER;
@@ -482,6 +484,7 @@ function maplesFortune(game, e) {
   const camp = campState(game);
   const p = game.player;
   if (game.trinkets < NPC.PRICE_FORTUNE) {
+    sfx('refuse');
     game.showDialog(npcTag('maple') +
       `Maple pats your hand. "Save your sparkle, dear. Come back with ${NPC.PRICE_FORTUNE} trinkets and the leaves will talk."`);
     e.offerT = 0;
@@ -489,6 +492,7 @@ function maplesFortune(game, e) {
   }
   game.trinkets -= NPC.PRICE_FORTUNE;
   game.updateTrinketHud();
+  sfx('chime');
   camp.fortunes++;
   e.offerT = 0;
   // a paid hint never feels wasted: it always bundles a full heal
@@ -557,10 +561,12 @@ function attemptBuy(game, e, w) {
   const p = game.player;
   e.confirmT = 0;
   if (e.ware === 'pouch' && !game.bombs) {
+    sfx('refuse');
     game.showDialog(npcTag('fennel') + '"These buds only wake for someone who\'s made things bloom before. Try the old stump in the forest first."');
     return;
   }
   if (game.trinkets < w.price) {
+    sfx('refuse');
     const lines = w.price >= 100
       ? '"Ah — the pride and joy. Two hundred trinkets, and I shall wrap it in my second-best leaf. One day!"'
       : `"That one's ${w.price} trinkets, friend. Shake some ogres, smash some pots — I believe in you."`;
@@ -569,6 +575,7 @@ function attemptBuy(game, e, w) {
   }
   game.trinkets -= w.price;
   game.updateTrinketHud();
+  sfx('buy');
   game.floatText(e.x, e.y - 34, `-${w.price}`);
   if (e.ware === 'snack') {
     p.hp = p.maxHp;
@@ -589,6 +596,7 @@ function attemptBuy(game, e, w) {
     camp.container = true;
     p.maxHp += 2;
     p.hp = p.maxHp;
+    sfx('fanfare');
     game.burst(e.x, e.y - 16, 18, PALETTE.fx.heart);
     game.burst(p.x, p.y - 12, 10, PALETTE.fx.flash);
     game.freeze(0.08);
@@ -612,6 +620,7 @@ function updateNpc(e, game, dt) {
     e.noteT -= dt;
     if (e.noteT <= 0) {
       e.noteT = 2.2 + Math.random() * 1.8;
+      sfx('pipNote');
       game.floatText(e.x + (Math.random() - 0.5) * 16, e.y - 24, '♪');
     }
   }

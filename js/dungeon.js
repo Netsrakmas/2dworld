@@ -1328,6 +1328,7 @@ function spawnDungeonEnemy(ch, id, wx, wy, room) {
       en.flashT = COMBAT.FLASH_TIME;
       en.st = 'retract';
       game.freeze(COMBAT.HITSTOP);
+      sfx('tink');
       game.floatText(en.x, en.y - 26, 'tink!');
       game.burst(en.x, en.y - 8, 5, PALETTE.fx.flash);
     };
@@ -1338,6 +1339,7 @@ function spawnDungeonEnemy(ch, id, wx, wy, room) {
 /* --- combat-room shutters --- */
 
 function sealShutters(game, room) {
+  sfx('shut');
   for (const d of room.doors) {
     const door = d.door;
     if (door.state === 'open' && door.type !== 'exit' && door.type !== 'ledge') {
@@ -1401,6 +1403,7 @@ function makeGulper(wx, wy, room) {
     hopFromX: 0, hopFromY: 0, hopToX: wx, hopToY: wy,
     onStaffHit: (game, b, finisher) => {
       if (b.st !== 'stunned') {
+        sfx('tink');
         game.floatText(b.x, b.y - 66, 'tink!');
         game.burst(b.x, b.y - 30, 4, PALETTE.fx.flash);
         game.freeze(0.03);
@@ -1545,6 +1548,7 @@ function gulpBomb(game, bombEnt, boss) {
   boss.st = 'stunned';
   boss.t = DUNGEON.BOSS.STUN_T;
   boss.flashT = COMBAT.FLASH_TIME;
+  sfx('pomf');
   game.freeze(COMBAT.HITSTOP_KILL);
   game.shake(0.2, 0.014);
   game.burst(boss.x - 26, boss.y - 44, 8, PALETTE.desert.blossom);   // petals from the ears
@@ -1575,6 +1579,7 @@ function updateHeartContainer(e, game, dt) {
     Dungeon.flags.heartTaken = true;
     p.maxHp += 2;
     p.hp = p.maxHp;
+    sfx('fanfare');
     game.burst(e.x, e.y - 10, 16, PALETTE.fx.heart);
     game.burst(e.x, e.y - 10, 10, PALETTE.fx.flash);
     game.floatText(e.x, e.y - 36, 'a whole new heart!');
@@ -1654,6 +1659,7 @@ function throwBomb(game) {
   }
   B.count--;
   B.cd = DUNGEON.BOMB.CD;
+  sfx('fuse');
   const p = game.player;
   const DIRV = DUNGEON_DIRV[p.dir];
   game.entities.push({
@@ -1702,6 +1708,7 @@ function updateBomb(e, game, dt) {
 
 function explodeBomb(game, e) {
   const B = DUNGEON.BOMB, D = PALETTE.desert;
+  sfx('boom');
   game.removeEntity(e);
   game.burst(e.x, e.y - 6, 16, D.blossom);
   game.burst(e.x, e.y - 6, 8, D.blossomLight);
@@ -1956,6 +1963,7 @@ function roomSwitchesLatched(room) {
 }
 
 function smashPot(game, e) {
+  sfx('pot');
   Dungeon.flags.smashed.add(e.id);
   if (Dungeon.cur && Dungeon.cur.dyn) Dungeon.cur.dyn.delete(e.ly * DUNGEON.ROOM_W + e.lx);
   game.freeze(COMBAT.HITSTOP);
@@ -1975,6 +1983,7 @@ function openChest(game, e) {
   if (e.state !== 'closed') return;
   e.state = 'opening';
   e.openT = 0;
+  sfx('chest');
   game.burst(e.x, e.y - 14, 6, PALETTE.fx.trinket);
 }
 
@@ -2022,6 +2031,7 @@ function updateDKey(e, game, dt) {
   if (dist2(p.x, p.y, e.x, e.y) < DUNGEON.KEY_RADIUS * DUNGEON.KEY_RADIUS * 4) {
     Dungeon.flags.keysTaken.add(e.id);
     Dungeon.keys++;
+    sfx('chime');
     game.burst(e.x, e.y - 8, 8, PALETTE.dungeon.keyGold);
     game.floatText(e.x, e.y - 28, '+1 key');
     game.removeEntity(e);
@@ -2042,6 +2052,7 @@ function updateDSwitch(e, game, dt) {
     e.latched = true;
     occ.locked = true;              // the roots grip the block for good
     Dungeon.flags.latched.add(e.id);
+    sfx('latch');
     game.burst(e.x, e.y - 4, 8, PALETTE.dungeon.floorSpeckle);
     game.floatText(e.x, e.y - 24, 'chunk!');
   }
@@ -2168,6 +2179,7 @@ function updateDoors(game, dt) {
       door.shakeT -= dt;
       if (door.shakeT <= 0) door.opening = true;
     } else if (door.opening && door.state === 'closed') {
+      if (door.anim === 0) sfx('unlock');   // the one first-frame-of-opening seam
       door.anim += dt / DUNGEON.DOOR_OPEN_T;
       if (door.anim >= 1) {
         door.anim = 1;

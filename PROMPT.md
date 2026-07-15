@@ -449,3 +449,18 @@ Add a small cast where the two biomes meet. Recipe from the research (RESEARCH.m
 **Aliveness:** NPCs turn to face the player in range, '!' bubble when they have unseen-phase dialog ('…' otherwise), idle fidget bob; ≥2 line variants per story phase (pre-bombs / post-stump-boss / post-den or hat) so the world visibly notices progress.
 
 **Acceptance:** all three NPCs interactable with paged, state-aware dialog; all three wares purchasable with correct deduction/refusal; fortune targets the real next objective and pings the minimap; camp deterministic per seed; 60fps; zero console errors; prior suites green.
+
+
+---
+
+## THE SOUND UPDATE (feature-addition prompt — the worlds find their voice)
+
+100% synthesized WebAudio — zero audio files, matching the zero-image rule. New logic in `js/audio.js`; hooks are one-line `sfx('name')` calls at existing feedback points. The cozy filter: sine/triangle only (no raw square/saw), every voice through a lowpass ≤3 kHz, attack ≥3 ms, exponential decay to 0.0001 (never 0), ±4% pitch / ±10% gain jitter on repeat-prone sounds.
+
+**Graph (built lazily on the first user gesture — no autoplay warning, the title keypress doubles as the unlock):** sfxBus (0.9) + musicBus (0.30) → compressor (−18 dB, knee 25, ratio 6, attack 3 ms, release 250 ms) → master (0.8). One "glade" tail: two parallel feedback delays (0.27 s + 0.41 s, feedback 0.35, lowpass 2200 Hz INSIDE the loop, wet 0.18); per-sound send gains. Shared 2 s white + pink (Paul Kellet) noise buffers. Voice cap 24; identical SFX within 30 ms skipped (footsteps 120 ms). M toggles mute (persisted).
+
+**The cookbook (waveform | freq | dur | peak):** swing = white noise bandpass 400→1400 Hz 150 ms 0.12 · hit = sine 160→60 Hz 100 ms 0.5 + dull noise grain · finisher adds triangle 55 Hz + 250 Hz knock + music duck −6 dB · hurt = triangle 392→196 Hz 220 ms · poof = pink noise 900→250 Hz + rising spirit sine · trinket = E6→A6 sine pair · heart = C5→G5 triangles · letter = G4-C5-E5 motif, 25% delay send · chest/heart-container = C5-E5-G5-C6 arpeggio (container holds the chord, ducks −9 dB) · unlock = clack + 90 Hz thud + G6 chime · bomb = 1.25 s bandpass-2400 fuse hiss, boom = sine 110→40 Hz + pink 500→120 Hz + 3 descending petal blips · pomf = sine 190→65 Hz through lowpass 700 · buy = B5→E6 + 5 kHz ching, refuse = two flat Eb4 pulses · steps = pink grains, sand (lowpass 450, double scuff) vs grass (bandpass 500-900) · Pip = pentatonic triangle plucks, 40% delay send.
+
+**Generative ambient (Eno with a wind vane):** three independent voices, no tempo grid — melody every 2-8 s from C-major pentatonic (C4-A5), drone C3/G3 every 12-25 s, sparkle octave-6 every 9-20 s. Patch: sine+triangle detuned ±6 cents, attack 150 ms, release ~2 s, lowpass 1500, 45% delay send, 15% rest chance, no immediate note repeats. Night: pool shifts up an octave, intervals ×1.6, lowpass 900, quieter drone. Dungeon: C-minor pentatonic (shared C root — mood switches stay consonant mid-tail). Wind: gusts quicken the melody up to −3 s and feed a looping pink-noise wind bed (lowpass 400+wind·900, gain 0.02+wind·0.05) that goes silent underground. Ducking: down fast (τ 50 ms), up slow (τ 300 ms).
+
+**Acceptance:** every feedback beat from the earlier updates has a voice (hit/finisher/hurt/poof/doors/keys/chests/switches/bombs/boss/shop/fortune/letters/steps/title); ambient notes schedule and stop while muted; zero console errors incl. no autoplay warning; 60 fps unchanged; graph node count bounded (voice cap).
