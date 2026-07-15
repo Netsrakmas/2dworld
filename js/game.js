@@ -55,6 +55,7 @@
     }
   };
   game.ring = (x, y) => {
+    sfx('slam');   // every ground slam (ogre + boss) shares this ring
     game.rings.push({ x, y, t: 0 });
     game.burst(x, y, 10, PALETTE.forest.groundSpeckle);
   };
@@ -445,8 +446,14 @@
     // gather visible drawables, y-sorted (props + entities + player)
     const drawables = [];
     const margin = 160;
-    for (let cyi = c0y; cyi <= c1y; cyi++) {
-      for (let cxi = c0x; cxi <= c1x; cxi++) {
+    // props are gathered from a WIDER chunk ring than the terrain: a tall
+    // tree anchored just across a chunk border (e.g. below the screen's
+    // bottom edge) reaches ~460px into view, so the anchor's chunk can be
+    // off-screen while the canopy isn't. Extent culling then trims per prop.
+    const g0x = Math.floor((ox - 140) / CHUNK_PX), g1x = Math.floor((ox + vw + 140) / CHUNK_PX);
+    const g0y = Math.floor((oy - 100) / CHUNK_PX), g1y = Math.floor((oy + vh + 480) / CHUNK_PX);
+    for (let cyi = g0y; cyi <= g1y; cyi++) {
+      for (let cxi = g0x; cxi <= g1x; cxi++) {
         const ch = getChunk(cxi, cyi);
         for (const pr of ch.props) {
           // cull against the sprite's real screen extents (fixes tall/scaled

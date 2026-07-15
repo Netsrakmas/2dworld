@@ -1476,6 +1476,7 @@ function updateGulper(e, game, dt) {
   } else if (e.st === 'volley') {
     if (e.t <= 0) {
       const ang = Math.atan2(p.y - e.y, p.x - e.x);
+      sfx('spit');
       game.entities.push({
         kind: 'glob', age: 0,
         x: e.x + Math.cos(ang) * 24, y: e.y - 18 + Math.sin(ang) * 24,
@@ -1848,6 +1849,7 @@ function updatePebblit(e, game, dt) {
   } else if (e.st === 'crouch') {
     if (e.t <= 0) {
       const [dx, dy] = DUNGEON_DIRV[e.dir];
+      sfx('spit');
       game.entities.push({ kind: 'pebble', x: e.x + dx * 14, y: e.y - 8 + dy * 14,
         px: e.x, py: e.y, vx: dx * C.SHOT_SPEED, vy: dy * C.SHOT_SPEED, age: 0 });
       e.st = 'pause'; e.t = C.PAUSE_MIN;

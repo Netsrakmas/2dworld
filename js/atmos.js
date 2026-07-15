@@ -5,8 +5,8 @@
 // only, no per-frame gradients or blurs.
 const ATMOS = Object.freeze({
   CLOUD_TILE: 512,
-  CLOUD_BLOBS: 7, CLOUD_R_MIN: 90, CLOUD_R_MAX: 230,   // sparse: gaps between shadows are the point
-  SUN_BLOBS: 6, SUN_R_MIN: 160, SUN_R_MAX: 300,
+  CLOUD_BLOBS: 5, CLOUD_R_MIN: 70, CLOUD_R_MAX: 175,   // sparse: gaps between shadows are the point
+  SUN_BLOBS: 5, SUN_R_MIN: 130, SUN_R_MAX: 240,
   CLOUD_ALPHA: 0.09,               // forest dapple
   SUN_ALPHA: 0.12,                 // desert sun patches
   CLOUD_SPEED: 16,                 // px/s, layer 1
@@ -30,7 +30,7 @@ const ATMOS = Object.freeze({
 
 const Atmos = {
   shadowTile: null, sunTile: null,
-  patShadow: null, patSun: null,
+  shadowLow1: null, shadowLow2: null, sunLow: null,
   vigWarm: null, vigCool: null, vigW: 0, vigH: 0,
   drift1: 0, drift2: 0,
   gust: 0, gustEvents: [], gustIdx: 0,
@@ -42,8 +42,19 @@ function buildAtmos(seedInt) {
     ATMOS.CLOUD_R_MIN, ATMOS.CLOUD_R_MAX, PALETTE.forest.blobShadow);
   Atmos.sunTile = bakeCloudTile(seedInt ^ 0x50BB, ATMOS.SUN_BLOBS,
     ATMOS.SUN_R_MIN, ATMOS.SUN_R_MAX, PALETTE.desert.sandRim);
-  Atmos.patShadow = null;          // created lazily against the live context
-  Atmos.patSun = null;
+  // pre-downscaled integer-sized copies for the low-res overlay. Transformed
+  // canvas patterns resample each tile with edge CLAMP (not wrap), which cut
+  // straight seam lines through cloud shadows every tile period — drawing
+  // whole prebaked tiles at integer offsets never resamples at all.
+  const S = ATMOS.CLOUD_TILE;
+  const down = (src, n) => {
+    const c = makeCanvas(n, n);
+    c.getContext('2d').drawImage(src, 0, 0, n, n);
+    return c;
+  };
+  Atmos.shadowLow1 = down(Atmos.shadowTile, Math.round(S / ATMOS_LOWRES));
+  Atmos.shadowLow2 = down(Atmos.shadowTile, Math.round(S * ATMOS.LAYER2_SCALE / ATMOS_LOWRES));
+  Atmos.sunLow = down(Atmos.sunTile, Math.round(S * ATMOS.LAYER2_SCALE * 0.9 / ATMOS_LOWRES));
   // deterministic gust schedule for the whole session
   const r = mulberry32(seedInt ^ 0x6057);
   Atmos.gustEvents.length = 0;
@@ -144,30 +155,32 @@ function drawAtmosClouds(ctx, game, ox, oy, vw, vh) {
   if (!Atmos.low || Atmos.low.width !== lw || Atmos.low.height !== lh) {
     Atmos.low = makeCanvas(lw, lh);
     Atmos.lowCtx = Atmos.low.getContext('2d');
-    Atmos.patShadow = Atmos.lowCtx.createPattern(Atmos.shadowTile, 'repeat');
-    Atmos.patSun = Atmos.lowCtx.createPattern(Atmos.sunTile, 'repeat');
     Atmos.lowVigWarm = bakeVignette(lw, lh, PALETTE.desert.sandShadow);
     Atmos.lowVigCool = bakeVignette(lw, lh, PALETTE.forest.canopyDark);
   }
   const lctx = Atmos.lowCtx;
   lctx.clearRect(0, 0, lw, lh);
   const ddx = Math.cos(ATMOS.CLOUD_DIR), ddy = Math.sin(ATMOS.CLOUD_DIR);
-  const fill = (pat, scale, drift, alpha) => {
+  // whole prebaked tiles at integer offsets: no pattern transform, no
+  // resampling, so no clamp seams cutting the shadows (each copy is a few
+  // small drawImages on the 1/3-res canvas — cheaper than the pattern fill)
+  const fill = (img, drift, alpha) => {
     if (alpha < 0.015) return;
-    const m = new DOMMatrix();
-    m.scaleSelf(1 / ATMOS_LOWRES, 1 / ATMOS_LOWRES);
-    m.translateSelf(-(ox + drift * ddx), -(oy + drift * ddy));
-    m.scaleSelf(scale, scale);
-    pat.setTransform(m);
+    const ts = img.width;
+    let x0 = Math.round(-(ox + drift * ddx) / ATMOS_LOWRES) % ts;
+    let y0 = Math.round(-(oy + drift * ddy) / ATMOS_LOWRES) % ts;
+    if (x0 > 0) x0 -= ts;
+    if (y0 > 0) y0 -= ts;
     lctx.globalAlpha = alpha;
-    lctx.fillStyle = pat;
-    lctx.fillRect(0, 0, lw, lh);
+    for (let y = y0; y < lh; y += ts) {
+      for (let x = x0; x < lw; x += ts) lctx.drawImage(img, x, y);
+    }
   };
   // forest: dark dapple, two drift layers so the tiling never reads.
   // Desert: inverted — fewer, larger warm sun-bleached patches.
-  fill(Atmos.patShadow, 1, Atmos.drift1, ATMOS.CLOUD_ALPHA * 1.6 * fA * 0.6);
-  fill(Atmos.patShadow, ATMOS.LAYER2_SCALE, Atmos.drift2, ATMOS.CLOUD_ALPHA * 1.6 * fA * 0.4);
-  fill(Atmos.patSun, ATMOS.LAYER2_SCALE * 0.9, Atmos.drift1, ATMOS.SUN_ALPHA * 1.5 * dA);
+  fill(Atmos.shadowLow1, Atmos.drift1, ATMOS.CLOUD_ALPHA * 1.6 * fA * 0.6);
+  fill(Atmos.shadowLow2, Atmos.drift2, ATMOS.CLOUD_ALPHA * 1.6 * fA * 0.4);
+  fill(Atmos.sunLow, Atmos.drift1, ATMOS.SUN_ALPHA * 1.5 * dA);
   // biome grade wash
   lctx.globalAlpha = ATMOS.WASH_ALPHA * 0.8;
   lctx.fillStyle = mixColor(PALETTE.desert.sandRim, PALETTE.forest.canopyDark, Atmos.blend);
@@ -214,16 +227,19 @@ function bakeAtmosLife(seedInt) {
     ctx.filter = 'none';
     Atmos.raySprite = c;
   }
-  // foreground canopy silhouette, soft dark frond cluster
+  // foreground canopy silhouette, soft dark frond cluster. The canvas is
+  // padded so no blob (radius <= 94 + 7px blur) ever touches the border —
+  // a clipped blob bakes a dead-straight edge that reads as a rectangular
+  // "cloud" cutting off mid-air.
   {
-    const c = makeCanvas(420, 220);
+    const c = makeCanvas(560, 360);
     const ctx = c.getContext('2d');
     const r = mulberry32(seedInt ^ 0xFA5);
     ctx.filter = 'blur(7px)';
     ctx.fillStyle = withAlpha(shade(PALETTE.forest.canopyDark, 0.65), 0.9);
     for (let i = 0; i < 12; i++) {
       ctx.beginPath();
-      ctx.arc(40 + r() * 340, 40 + r() * 120, 42 + r() * 52, 0, Math.PI * 2);
+      ctx.arc(110 + r() * 340, 110 + r() * 140, 42 + r() * 52, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.filter = 'none';
@@ -446,7 +462,8 @@ function drawParallax(ctx, game, camX, camY, vw, vh) {
   const G = ATMOS_LIFE.PARA_GRID;
   const g0x = Math.floor((camX - vw) / G), g1x = Math.floor((camX + vw) / G);
   const g0y = Math.floor((camY - vh) / G), g1y = Math.floor((camY + vh) / G);
-  ctx.globalAlpha = ATMOS_LIFE.PARA_ALPHA * clamp((Atmos.blend - 0.55) / 0.3, 0, 1);
+  const baseA = ATMOS_LIFE.PARA_ALPHA * clamp((Atmos.blend - 0.55) / 0.3, 0, 1);
+  const sw = Atmos.paraSprite.width, sh = Atmos.paraSprite.height;
   for (let gy = g0y; gy <= g1y; gy++) {
     for (let gx = g0x; gx <= g1x; gx++) {
       const h = hash2i(gx, gy, 0xFA6);
@@ -455,10 +472,16 @@ function drawParallax(ctx, game, camX, camY, vw, vh) {
       // apparent position: anchor plus extra motion against the camera
       const px = axw + (axw - camX) * (f - 1) - (camX - vw / 2);
       const py = ayw + (ayw - camY) * (f - 1) - (camY - vh / 2);
-      if (px < -520 || px > vw + 520 || py < -320 || py > vh + 320) continue;
-      // edges only — a frond cluster hovering mid-screen reads as a smudge
-      if (px > vw * 0.2 && px < vw * 0.62 && py > vh * 0.2 && py < vh * 0.62) continue;
+      if (px + sw < 0 || px > vw || py + sh < 0 || py > vh) continue;
+      // edges only — but with a SMOOTH per-frond fade toward screen center;
+      // the old rectangular exclusion made whole clusters pop in and out in
+      // a single frame as they scrolled across its border
+      const nx = Math.abs(px + sw / 2 - vw / 2) / (vw / 2);
+      const ny = Math.abs(py + sh / 2 - vh / 2) / (vh / 2);
+      const edge = clamp((Math.max(nx, ny) - 0.45) / 0.3, 0, 1);
+      if (edge <= 0.02) continue;
       const sway = Math.sin(game.time * 0.5 + h) * ATMOS_LIFE.PARA_SWAY;
+      ctx.globalAlpha = baseA * edge;
       ctx.drawImage(Atmos.paraSprite, px + sway, py);
     }
   }

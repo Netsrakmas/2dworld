@@ -215,17 +215,34 @@ function duckMusic(mult, dur) {
 /* ---------------- the SFX cookbook ---------------- */
 
 const SFX_DEFS = {
-  // combat
-  swing() { grain(0.15, 0.12, { ftype: 'bandpass', f0: 400, f1: 1400, q: 1.5, sweepT: 0.12, attack: 0.01 }); },
+  // combat — every impact carries a MID-frequency layer (300-900 Hz) so it
+  // still reads on laptop speakers, which can't reproduce the sub-150Hz body
+  swing() { grain(0.16, 0.22, { ftype: 'bandpass', f0: 400, f1: 1400, q: 1.5, sweepT: 0.13, attack: 0.01 }); },
   hit() {
     blip(160, 60, 0.1, 0.5, 'sine', { attack: 0.003, lp: 1500 });
-    grain(0.03, 0.2, { f0: 800, attack: 0.002 });
+    blip(330, 140, 0.09, 0.3, 'triangle', { attack: 0.003, lp: 2000 });
+    grain(0.05, 0.25, { ftype: 'bandpass', f0: 700, q: 4, attack: 0.002 });
   },
   finisher() {
     blip(200, 45, 0.18, 0.65, 'sine', { attack: 0.003 });
+    blip(380, 160, 0.14, 0.35, 'triangle', { attack: 0.003, lp: 2200 });
     blip(55, 55, 0.22, 0.3, 'triangle', { attack: 0.005, lp: 900 });
-    grain(0.06, 0.25, { ftype: 'bandpass', f0: 250, q: 8 });
+    grain(0.06, 0.28, { ftype: 'bandpass', f0: 320, q: 6 });
     duckMusic(0.5, 0.3);
+  },
+  slam() {
+    blip(120, 45, 0.5, 0.5, 'sine', { attack: 0.005, lp: 700 });
+    blip(260, 90, 0.28, 0.32, 'triangle', { attack: 0.004, lp: 1400 });
+    grain(0.4, 0.28, { pink: true, f0: 600, f1: 200, sweepT: 0.35 });
+    duckMusic(0.6, 0.4);
+  },
+  alert() { blip(523.25, 784, 0.09, 0.14, 'triangle', { attack: 0.005, lp: 2500 }); },
+  spit() { blip(620, 260, 0.08, 0.12, 'triangle', { attack: 0.004, lp: 2200 }); },
+  swoon() {
+    blip(392, 0, 0.28, 0.22, 'triangle', { lp: 1400, exact: true });
+    blip(329.63, 0, 0.28, 0.2, 'triangle', { at: 0.22, lp: 1200, exact: true });
+    blip(261.63, 0, 0.6, 0.2, 'triangle', { at: 0.44, lp: 1000, exact: true, send: 0.3 });
+    duckMusic(0.4, 1.4);
   },
   tink() { blip(1244, 1244, 0.07, 0.18, 'triangle', { attack: 0.003, lp: 4000 }); },
   hurt() { blip(392, 196, 0.22, 0.35, 'triangle', { attack: 0.005, lp: 1200 }); },

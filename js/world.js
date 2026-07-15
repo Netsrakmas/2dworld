@@ -303,22 +303,35 @@ function bakeTerrain(chunk) {
   const ctx = c.getContext('2d');
   const ox = cx * CHUNK_PX, oy = cy * CHUNK_PX;
 
-  // ground: per-tile fill lerped between sand and parchment, then shifted by
-  // two very-low-frequency macro noises (light/dark + warm/cool) so large
-  // areas breathe instead of reading as flat digital fill
+  // ground: sand↔parchment lerp shifted by two very-low-frequency macro
+  // noises (light/dark + warm/cool). Sampled ONE PIXEL PER TILE into a tiny
+  // canvas, then upscaled with bilinear smoothing — per-tile flat fills
+  // quantized the noise into 40px steps whose iso-lines read as hard-edged
+  // dark "cloud" blobs baked into the ground. Neighbor chunks sample the
+  // same world tiles, so the interpolation is seamless across borders.
   const sandRgb = hexToRgb(D.sandBase), groundRgb = hexToRgb(F.ground);
-  for (let ty = -1; ty <= CHUNK; ty++) {
-    for (let tx = -1; tx <= CHUNK; tx++) {
-      const wtx = cx * CHUNK + tx, wty = cy * CHUNK + ty;
-      const bl = blendAtTile(wtx, wty);
-      const ml = 1 + (World.noiseMacroL.fbm(wtx / 34, wty / 34, 2) - 0.5) * 0.15;
-      const mw = (World.noiseMacroW.fbm(wtx / 46, wty / 46, 2) - 0.5) * 0.11;
-      ctx.fillStyle = rgbToCss(
-        clamp(lerp(sandRgb[0], groundRgb[0], bl) * ml * (1 + mw), 0, 255),
-        clamp(lerp(sandRgb[1], groundRgb[1], bl) * ml * (1 + mw * 0.25), 0, 255),
-        clamp(lerp(sandRgb[2], groundRgb[2], bl) * ml * (1 - mw), 0, 255));
-      ctx.fillRect(tx * TILE - 1, ty * TILE - 1, TILE + 2, TILE + 2);
+  {
+    const n = CHUNK + 3;               // samples for tiles -1 .. CHUNK+1
+    const mini = makeCanvas(n, n);
+    const mctx = mini.getContext('2d');
+    const id = mctx.createImageData(n, n);
+    const px = id.data;
+    for (let ty = -1; ty <= CHUNK + 1; ty++) {
+      for (let tx = -1; tx <= CHUNK + 1; tx++) {
+        const wtx = cx * CHUNK + tx, wty = cy * CHUNK + ty;
+        const bl = blendAtTile(wtx, wty);
+        const ml = 1 + (World.noiseMacroL.fbm(wtx / 34, wty / 34, 2) - 0.5) * 0.15;
+        const mw = (World.noiseMacroW.fbm(wtx / 46, wty / 46, 2) - 0.5) * 0.11;
+        const i = ((ty + 1) * n + (tx + 1)) * 4;
+        px[i] = clamp(lerp(sandRgb[0], groundRgb[0], bl) * ml * (1 + mw), 0, 255);
+        px[i + 1] = clamp(lerp(sandRgb[1], groundRgb[1], bl) * ml * (1 + mw * 0.25), 0, 255);
+        px[i + 2] = clamp(lerp(sandRgb[2], groundRgb[2], bl) * ml * (1 - mw), 0, 255);
+        px[i + 3] = 255;
+      }
     }
+    mctx.putImageData(id, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(mini, -TILE, -TILE, n * TILE, n * TILE);
   }
 
   // large soft ground patches

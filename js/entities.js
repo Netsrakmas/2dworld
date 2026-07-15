@@ -157,6 +157,7 @@ function updateOgre(e, game, dt) {
     if (dToPlayer < seeR) {
       e.state = 'chase';
       e.alertT = COMBAT.OGRE_ALERT;   // "!" pause before charging
+      sfx('alert');
       return;
     }
     e.repathT -= dt;

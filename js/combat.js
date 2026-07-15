@@ -288,6 +288,7 @@ function damagePlayer(game, amount, fromX, fromY) {
   game.burst(p.x, p.y - 12, 12, PALETTE.forest.ogreRed);
   game.floatText(p.x, p.y - 40, 'oof!');
   if (p.hp <= 0) {
+    sfx('swoon');
     game.deathT = 0;           // soft fade, respawn with everything kept
   }
 }
