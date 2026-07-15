@@ -5,7 +5,7 @@
 // The AudioContext is created lazily on the first user gesture, so there is
 // never an autoplay warning and the title keypress doubles as the unlock.
 const AUDIO = Object.freeze({
-  MASTER: 0.8, SFX_BUS: 0.9, MUSIC_BUS: 0.3,
+  MASTER: 0.8, SFX_BUS: 1.0, MUSIC_BUS: 0.26,   // SFX are the protagonist; the compressor guards the sum
   COMP: Object.freeze({ threshold: -18, knee: 25, ratio: 6, attack: 0.003, release: 0.25 }),
   DELAYS: Object.freeze([0.27, 0.41]),   // two non-integer-ratio taps kill flutter
   FEEDBACK: 0.35, DELAY_LP: 2200, WET: 0.18,
@@ -216,39 +216,46 @@ function duckMusic(mult, dur) {
 
 const SFX_DEFS = {
   // combat — every impact carries a MID-frequency layer (300-900 Hz) so it
-  // still reads on laptop speakers, which can't reproduce the sub-150Hz body
-  swing() { grain(0.16, 0.22, { ftype: 'bandpass', f0: 400, f1: 1400, q: 1.5, sweepT: 0.13, attack: 0.01 }); },
+  // still reads on laptop speakers, which can't reproduce the sub-150Hz body.
+  // Peaks here run hotter than other categories: filters eat most of a
+  // grain's energy (the old 0.22 swing measured 0.06 at the master bus).
+  swing() {
+    grain(0.17, 0.8, { ftype: 'bandpass', f0: 400, f1: 1500, q: 1, sweepT: 0.13, attack: 0.012 });
+    grain(0.14, 0.2, { f0: 2400, attack: 0.015 });   // broadband air under the sweep
+  },
   hit() {
-    blip(160, 60, 0.1, 0.5, 'sine', { attack: 0.003, lp: 1500 });
-    blip(330, 140, 0.09, 0.3, 'triangle', { attack: 0.003, lp: 2000 });
-    grain(0.05, 0.25, { ftype: 'bandpass', f0: 700, q: 4, attack: 0.002 });
+    blip(160, 60, 0.1, 0.6, 'sine', { attack: 0.003, lp: 1500 });
+    blip(330, 140, 0.1, 0.45, 'triangle', { attack: 0.003, lp: 2000 });
+    grain(0.05, 0.4, { ftype: 'bandpass', f0: 700, q: 4, attack: 0.002 });
+    duckMusic(0.6, 0.2);   // hits punch through the ambient layer
   },
   finisher() {
-    blip(200, 45, 0.18, 0.65, 'sine', { attack: 0.003 });
-    blip(380, 160, 0.14, 0.35, 'triangle', { attack: 0.003, lp: 2200 });
+    blip(200, 45, 0.18, 0.75, 'sine', { attack: 0.003 });
+    blip(380, 160, 0.15, 0.5, 'triangle', { attack: 0.003, lp: 2200 });
     blip(55, 55, 0.22, 0.3, 'triangle', { attack: 0.005, lp: 900 });
-    grain(0.06, 0.28, { ftype: 'bandpass', f0: 320, q: 6 });
-    duckMusic(0.5, 0.3);
+    grain(0.06, 0.42, { ftype: 'bandpass', f0: 320, q: 6 });
+    duckMusic(0.45, 0.35);
   },
   slam() {
-    blip(120, 45, 0.5, 0.5, 'sine', { attack: 0.005, lp: 700 });
-    blip(260, 90, 0.28, 0.32, 'triangle', { attack: 0.004, lp: 1400 });
-    grain(0.4, 0.28, { pink: true, f0: 600, f1: 200, sweepT: 0.35 });
-    duckMusic(0.6, 0.4);
+    blip(120, 45, 0.5, 0.6, 'sine', { attack: 0.005, lp: 700 });
+    blip(260, 90, 0.3, 0.45, 'triangle', { attack: 0.004, lp: 1400 });
+    grain(0.4, 0.38, { pink: true, f0: 600, f1: 200, sweepT: 0.35 });
+    duckMusic(0.55, 0.4);
   },
-  alert() { blip(523.25, 784, 0.09, 0.14, 'triangle', { attack: 0.005, lp: 2500 }); },
-  spit() { blip(620, 260, 0.08, 0.12, 'triangle', { attack: 0.004, lp: 2200 }); },
+  alert() { blip(523.25, 784, 0.09, 0.2, 'triangle', { attack: 0.005, lp: 2500 }); },
+  spit() { blip(620, 260, 0.08, 0.2, 'triangle', { attack: 0.004, lp: 2200 }); },
   swoon() {
     blip(392, 0, 0.28, 0.22, 'triangle', { lp: 1400, exact: true });
     blip(329.63, 0, 0.28, 0.2, 'triangle', { at: 0.22, lp: 1200, exact: true });
     blip(261.63, 0, 0.6, 0.2, 'triangle', { at: 0.44, lp: 1000, exact: true, send: 0.3 });
     duckMusic(0.4, 1.4);
   },
-  tink() { blip(1244, 1244, 0.07, 0.18, 'triangle', { attack: 0.003, lp: 4000 }); },
-  hurt() { blip(392, 196, 0.22, 0.35, 'triangle', { attack: 0.005, lp: 1200 }); },
+  tink() { blip(1244, 1244, 0.07, 0.26, 'triangle', { attack: 0.003, lp: 4000 }); },
+  hurt() { blip(392, 196, 0.22, 0.5, 'triangle', { attack: 0.005, lp: 1200 }); },
   poof() {
-    grain(0.26, 0.3, { pink: true, f0: 900, f1: 250, sweepT: 0.22 });
-    blip(523, 1046, 0.12, 0.08, 'sine', { attack: 0.02, at: 0.06 });
+    grain(0.26, 0.5, { pink: true, f0: 900, f1: 250, sweepT: 0.22 });
+    blip(660, 330, 0.12, 0.2, 'triangle', { attack: 0.004, lp: 1800 });
+    blip(523, 1046, 0.12, 0.12, 'sine', { attack: 0.02, at: 0.06 });
   },
   pot() {
     grain(0.05, 0.25, { f0: 1600, ftype: 'bandpass', q: 2 });
