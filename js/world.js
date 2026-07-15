@@ -543,6 +543,7 @@ function genChunk(cx, cy) {
   const chunk = {
     cx, cy,
     solid: new Uint8Array(CHUNK * CHUNK),
+    blockers: [],                  // per-prop ellipse colliders
     props: [],
     entities: [],
     canvas: null,
@@ -572,16 +573,14 @@ function genChunk(cx, cy) {
       bot: (spr.c.height - spr.ay) * sc + 10,
     });
     if (blocking) {
-      markSolid(chunk, wtx - baseTx, wty - baseTy);
-      // big props block what they visually cover: when the body's base
-      // clearly crosses a tile border, the neighbor blocks too. Swaying
-      // props (trees) are exempt — their WIDE part is canopy overhead;
-      // only the narrow trunk should collide.
-      if (!sway) {
-        const half = spr.c.width * sc * 0.3;
-        const cxPx = (wtx + 0.5) * TILE + jx;
-        if (cxPx - half < wtx * TILE - 6) markSolid(chunk, wtx - 1 - baseTx, wty - baseTy);
-        if (cxPx + half > (wtx + 1) * TILE + 6) markSolid(chunk, wtx + 1 - baseTx, wty - baseTy);
+      // ellipse collider hugging the sprite's VISUAL base (jitter included) —
+      // tile marks can't follow jittered/scaled sprites, which reads as
+      // invisible walls beside small rocks and un-hugable big ones. Trees
+      // collide as trunks (spr.coll): the wide canopy is overhead, and you
+      // walk behind it. coll === 0 means authored tile marks own collision.
+      const r = (spr.coll !== undefined ? spr.coll : spr.c.width * 0.3) * sc;
+      if (r > 0) {
+        chunk.blockers.push({ x: (wtx + 0.5) * TILE + jx, y: (wty + 0.5) * TILE + jy, r });
       }
     }
   };
@@ -728,10 +727,8 @@ function genChunk(cx, cy) {
       if (!feat.type) continue;
 
       if (feat.type === 'skeleton') {
-        // half-buried giant skeleton
+        // half-buried giant skeleton (the skull's ellipse collider covers it)
         addProp(SPRITES.skull, 0, ftx, fty, 0, 0, true);
-        markSolid(chunk, ftx - baseTx - 1, fty - baseTy);
-        markSolid(chunk, ftx - baseTx + 1, fty - baseTy);
         for (let i = 0; i < 6; i++) {
           const a = Math.PI * (0.9 + 0.5 * (i / 5));
           const bx2 = ftx + Math.round(Math.cos(a) * (3 + (i % 2)));
@@ -821,10 +818,7 @@ function genChunk(cx, cy) {
         } else if (lm.type === 'stones') {
           ring(SPRITES.stone, lm.extra < 0.5 ? 5 : 7, 3, 1.75, true, 0);
         } else if (lm.type === 'greattree') {
-          place(SPRITES.treeRound, 2, 0, 0, true, 1, 2.9);
-          markSolid(chunk, lm.tx - 1 - baseTx, lm.ty - baseTy);
-          markSolid(chunk, lm.tx + 1 - baseTx, lm.ty - baseTy);
-          markSolid(chunk, lm.tx - baseTx, lm.ty - 1 - baseTy);
+          place(SPRITES.treeRound, 2, 0, 0, true, 1, 2.9);   // trunk collider scales with it
           for (let i = 0; i < 5; i++) place(SPRITES.grass, i, (rr() - 0.5) * 7, 2.6 + rr() * 2.6, false, 1, 1);
           for (let i = 0; i < 3; i++) place(SPRITES.mushroom, 0, (rr() - 0.5) * 6, 2 + rr() * 3, false, 0, 1.1);
         }
@@ -957,7 +951,28 @@ function isSolidAt(wx, wy) {
   const tx = Math.floor(wx / TILE), ty = Math.floor(wy / TILE);
   const cx = Math.floor(tx / CHUNK), cy = Math.floor(ty / CHUNK);
   const ch = getChunk(cx, cy);
-  return ch.solid[(ty - cy * CHUNK) * CHUNK + (tx - cx * CHUNK)] === 1;
+  if (ch.solid[(ty - cy * CHUNK) * CHUNK + (tx - cx * CHUNK)] === 1) return true;
+  return propBlockedAt(wx, wy);
+}
+
+// prop colliders are ellipses squashed 1.7x vertically: you slide close past
+// the sides and can tuck in BEHIND a prop until your feet nearly touch its
+// base — the y-sort draws it over you, which is the walk-behind feel
+const BLOCKER_REACH = 96;   // px: max collider radius (greatskull ~57)
+
+function propBlockedAt(wx, wy) {
+  const c0x = Math.floor((wx - BLOCKER_REACH) / CHUNK_PX), c1x = Math.floor((wx + BLOCKER_REACH) / CHUNK_PX);
+  const c0y = Math.floor((wy - BLOCKER_REACH) / CHUNK_PX), c1y = Math.floor((wy + BLOCKER_REACH) / CHUNK_PX);
+  for (let cy = c0y; cy <= c1y; cy++) {
+    for (let cx = c0x; cx <= c1x; cx++) {
+      const ch = getChunk(cx, cy);
+      for (const b of ch.blockers) {
+        const dx = wx - b.x, dy = (wy - b.y) * 1.7;
+        if (dx * dx + dy * dy < b.r * b.r) return true;
+      }
+    }
+  }
+  return false;
 }
 
 function evictFarChunks(pcx, pcy, onEvict) {

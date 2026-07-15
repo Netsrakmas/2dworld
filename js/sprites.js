@@ -990,6 +990,19 @@ function buildSprites(seedInt) {
 
   // the Great Stump (dungeon entrance) + dungeon torch sconce & baked glow
   SPRITES.stump = propSprite(230, 200, 115, 190, (ctx) => drawStump(ctx, 230, 200, R));
+
+  // collision footprints: base radius (px at scale 1) of each prop's VISUAL
+  // base, for the ellipse colliders — a tile-grid mark can't follow jittered,
+  // scaled sprites, which read as invisible walls and unwalkable gaps.
+  // Trees collide as TRUNKS: the wide part is canopy you walk behind.
+  for (const c of SPRITES.cactus) c.coll = 13;
+  for (const c of SPRITES.rock) c.coll = 15;
+  for (const c of SPRITES.stone) c.coll = 13;
+  for (const c of SPRITES.treeRound) c.coll = 11;
+  for (const c of SPRITES.treeConifer) c.coll = 10;
+  for (const c of SPRITES.barrel) c.coll = 14;
+  for (const c of SPRITES.palisade) c.coll = 0;   // the camp's authored tile marks own it
+  SPRITES.skull.coll = 26;
   SPRITES.torch = [];
   for (let boil = 0; boil < 2; boil++) {
     const rr2 = mulberry32(hash2i(3, boil, seedInt ^ 0x70C));
