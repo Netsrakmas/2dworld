@@ -475,6 +475,30 @@
 
     const boil = ((game.time * 8) | 0) % 2;
 
+    // ground pass: every prop's shadow lies flat UNDER all bodies. A shadow
+    // baked into the body canvas draws over the player whenever its prop
+    // y-sorts in front — the classic feet-in-shadow bug.
+    for (const d of drawables) {
+      if (d.kind || d === p) continue;
+      const sh = d.spr.sh;
+      if (!sh) continue;
+      const px = d.x - ox, py = d.y - oy;
+      const psc = d.s || 1;
+      if (d.sway || d.flip || psc !== 1) {
+        ctx.save();
+        ctx.translate(px, py);
+        if (d.sway) {
+          ctx.rotate(windAt(d.x, d.y, game.time) * ATMOS.SWAY_PROP +
+                     Math.sin(game.time * 1.3 + d.phase) * 0.008);
+        }
+        if (psc !== 1 || d.flip) ctx.scale(d.flip ? -psc : psc, psc);
+        ctx.drawImage(sh, -d.spr.ax, -d.spr.ay);
+        ctx.restore();
+      } else {
+        ctx.drawImage(sh, Math.round(px - d.spr.ax), Math.round(py - d.spr.ay));
+      }
+    }
+
     for (const d of drawables) {
       if (d === p) { drawPlayer(alpha, ox, oy, boil); continue; }
       if (d.kind) { drawEntity(d, alpha, ox, oy, boil); continue; }
@@ -748,6 +772,7 @@
     // idle breathing: 3.4s period, feet-pivoted, X counter-scaled
     const breathe = p.moving ? 0 : Math.sin(game.time * (Math.PI * 2 / 3.4)) * 0.025;
     ctx.scale((2 - p.squash) * (1 - breathe), p.squash * (1 + breathe));
+    if (spr.sh) ctx.drawImage(spr.sh, -spr.ax, -spr.ay);   // desert silhouette shadow
     ctx.drawImage(spr.c, -spr.ax, -spr.ay);
     ctx.restore();
 
@@ -842,6 +867,7 @@
       drawCampEntity(ctx, game, e, x, y, boil);
     } else if (e.kind === 'sign') {
       const spr = SPRITES.sign;
+      if (spr.sh) ctx.drawImage(spr.sh, x - spr.ax, y - spr.ay);
       ctx.drawImage(spr.c, x - spr.ax, y - spr.ay);
     } else if (e.kind === 'letter') {
       const spr = SPRITES.letter;

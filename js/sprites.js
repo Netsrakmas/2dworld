@@ -14,6 +14,21 @@ function sprite(w, h, ax, ay, draw) {
   return { c, ax, ay };
 }
 
+// Ground shadows for PROPS are split onto their own canvas (spr.sh) so the
+// renderer can lay every shadow on the ground BEFORE the y-sorted bodies —
+// a shadow baked into the body draws over the player whenever the prop
+// sorts in front. While _shCtx is set, blobShadow() paints there instead.
+let _shCtx = null;
+
+function propSprite(w, h, ax, ay, draw) {
+  const sh = makeCanvas(w, h);
+  _shCtx = sh.getContext('2d');
+  const s = sprite(w, h, ax, ay, draw);
+  _shCtx = null;
+  s.sh = sh;
+  return s;
+}
+
 // Desert objects: draw the object via drawFn, then compose silhouette shadow
 // (offset, sandShadow hue, crisp) underneath — never blur.
 function flatSprite(w, h, ax, ay, drawFn, noShadow) {
@@ -21,18 +36,22 @@ function flatSprite(w, h, ax, ay, drawFn, noShadow) {
   const tctx = tmp.getContext('2d');
   tctx.lineJoin = 'round'; tctx.lineCap = 'round';
   drawFn(tctx);
-  return sprite(w + SHADOW_DX, h + SHADOW_DY, ax, ay, (ctx) => {
-    if (!noShadow) {
-      const sh = makeCanvas(w, h);
-      const sctx = sh.getContext('2d');
-      sctx.drawImage(tmp, 0, 0);
-      sctx.globalCompositeOperation = 'source-in';
-      sctx.fillStyle = PALETTE.desert.sandShadow;
-      sctx.fillRect(0, 0, w, h);
-      ctx.drawImage(sh, SHADOW_DX, SHADOW_DY);
-    }
+  const s = sprite(w + SHADOW_DX, h + SHADOW_DY, ax, ay, (ctx) => {
     ctx.drawImage(tmp, 0, 0);
   });
+  if (!noShadow) {
+    // silhouette shadow on its own canvas (same dims/anchor as the body)
+    const sil = makeCanvas(w, h);
+    const sctx = sil.getContext('2d');
+    sctx.drawImage(tmp, 0, 0);
+    sctx.globalCompositeOperation = 'source-in';
+    sctx.fillStyle = PALETTE.desert.sandShadow;
+    sctx.fillRect(0, 0, w, h);
+    const sh = makeCanvas(w + SHADOW_DX, h + SHADOW_DY);
+    sh.getContext('2d').drawImage(sil, SHADOW_DX, SHADOW_DY);
+    s.sh = sh;
+  }
+  return s;
 }
 
 function rr(ctx, x, y, w, h, r) {
@@ -200,10 +219,11 @@ function drawKnuckle(ctx, w, h, rng) {
 /* ---------------- forest props ---------------- */
 
 function blobShadow(ctx, cx, cy, rx, ry) {
-  ctx.fillStyle = withAlpha(PALETTE.forest.blobShadow, 0.25);
-  ctx.beginPath();
-  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-  ctx.fill();
+  const c = _shCtx || ctx;   // prop bakes redirect their shadow to spr.sh
+  c.fillStyle = withAlpha(PALETTE.forest.blobShadow, 0.25);
+  c.beginPath();
+  c.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  c.fill();
 }
 
 function drawTreeRound(ctx, w, h, rng) {
@@ -848,29 +868,29 @@ function buildSprites(seedInt) {
   for (let i = 0; i < 5; i++) {
     const s = 0.8 + R() * 0.5;
     const w = 150 * s, h = 160 * s;
-    SPRITES.treeRound.push(sprite(w, h, w / 2, h * 0.9, (ctx) => drawTreeRound(ctx, w, h, R)));
+    SPRITES.treeRound.push(propSprite(w, h, w / 2, h * 0.9, (ctx) => drawTreeRound(ctx, w, h, R)));
   }
   SPRITES.treeConifer = [];
   for (let i = 0; i < 4; i++) {
     const s = 0.75 + R() * 0.5;
     const w = 110 * s, h = 150 * s;
-    SPRITES.treeConifer.push(sprite(w, h, w / 2, h * 0.93, (ctx) => drawTreeConifer(ctx, w, h, R)));
+    SPRITES.treeConifer.push(propSprite(w, h, w / 2, h * 0.93, (ctx) => drawTreeConifer(ctx, w, h, R)));
   }
-  SPRITES.barrel = [sprite(44, 52, 22, 48, (ctx) => drawBarrel(ctx, 44, 52, R)),
-                    sprite(38, 46, 19, 43, (ctx) => drawBarrel(ctx, 38, 46, R))];
-  SPRITES.palisade = [sprite(130, 96, 65, 88, (ctx) => drawPalisade(ctx, 130, 96, R)),
-                      sprite(130, 96, 65, 88, (ctx) => drawPalisade(ctx, 130, 96, R))];
-  SPRITES.sign = sprite(76, 86, 38, 82, (ctx) => drawSign(ctx, 76, 86, R));
+  SPRITES.barrel = [propSprite(44, 52, 22, 48, (ctx) => drawBarrel(ctx, 44, 52, R)),
+                    propSprite(38, 46, 19, 43, (ctx) => drawBarrel(ctx, 38, 46, R))];
+  SPRITES.palisade = [propSprite(130, 96, 65, 88, (ctx) => drawPalisade(ctx, 130, 96, R)),
+                      propSprite(130, 96, 65, 88, (ctx) => drawPalisade(ctx, 130, 96, R))];
+  SPRITES.sign = propSprite(76, 86, 38, 82, (ctx) => drawSign(ctx, 76, 86, R));
   SPRITES.stone = [];
   for (let i = 0; i < 4; i++) {
     const s = 0.6 + R() * 0.9;
     const w = 34 * s, h = 26 * s;
-    SPRITES.stone.push(sprite(w, h, w / 2, h * 0.8, (ctx) => drawStone(ctx, w, h, R)));
+    SPRITES.stone.push(propSprite(w, h, w / 2, h * 0.8, (ctx) => drawStone(ctx, w, h, R)));
   }
-  SPRITES.mushroom = [sprite(20, 22, 10, 20, (ctx) => drawMushroom(ctx, 20, 22, R))];
+  SPRITES.mushroom = [propSprite(20, 22, 10, 20, (ctx) => drawMushroom(ctx, 20, 22, R))];
   SPRITES.grass = [];
   for (let i = 0; i < 4; i++) {
-    SPRITES.grass.push(sprite(20, 16, 10, 15, (ctx) => drawGrassTuft(ctx, 20, 16, R)));
+    SPRITES.grass.push(propSprite(20, 16, 10, 15, (ctx) => drawGrassTuft(ctx, 20, 16, R)));
   }
   SPRITES.leaf = [];
   for (let i = 0; i < 3; i++) {
@@ -969,7 +989,7 @@ function buildSprites(seedInt) {
   }
 
   // the Great Stump (dungeon entrance) + dungeon torch sconce & baked glow
-  SPRITES.stump = sprite(230, 200, 115, 190, (ctx) => drawStump(ctx, 230, 200, R));
+  SPRITES.stump = propSprite(230, 200, 115, 190, (ctx) => drawStump(ctx, 230, 200, R));
   SPRITES.torch = [];
   for (let boil = 0; boil < 2; boil++) {
     const rr2 = mulberry32(hash2i(3, boil, seedInt ^ 0x70C));

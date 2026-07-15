@@ -566,7 +566,19 @@ function genChunk(cx, cy) {
       top: spr.ay * sc + 10,
       bot: (spr.c.height - spr.ay) * sc + 10,
     });
-    if (blocking) markSolid(chunk, wtx - baseTx, wty - baseTy);
+    if (blocking) {
+      markSolid(chunk, wtx - baseTx, wty - baseTy);
+      // big props block what they visually cover: when the body's base
+      // clearly crosses a tile border, the neighbor blocks too. Swaying
+      // props (trees) are exempt — their WIDE part is canopy overhead;
+      // only the narrow trunk should collide.
+      if (!sway) {
+        const half = spr.c.width * sc * 0.3;
+        const cxPx = (wtx + 0.5) * TILE + jx;
+        if (cxPx - half < wtx * TILE - 6) markSolid(chunk, wtx - 1 - baseTx, wty - baseTy);
+        if (cxPx + half > (wtx + 1) * TILE + 6) markSolid(chunk, wtx + 1 - baseTx, wty - baseTy);
+      }
+    }
   };
 
   /* ---- clustered scatter (Thomas process over per-family density fields) ----
