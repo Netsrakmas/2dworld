@@ -313,6 +313,7 @@ const SFX_DEFS = {
       blip(f, 0, 0.08, 0.06, 'sine', { at: 0.12 + i * 0.06, send: 0.35, exact: true }));
     duckMusic(0.5, 0.8);
   },
+  rumble() { grain(0.5, 0.3, { pink: true, f0: 350, f1: 150, sweepT: 0.45, attack: 0.03 }); },
   pomf() {
     blip(190, 65, 0.18, 0.45, 'sine', { attack: 0.005, lp: 700 });
     grain(0.09, 0.18, { pink: true, f0: 650 });

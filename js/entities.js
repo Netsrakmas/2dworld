@@ -90,6 +90,13 @@ function spawnEntity(spec, chunk) {
     case 'campfire':
       initCampEntity(e, spec);   // js/npcs.js
       break;
+    case 'wiggler':
+    case 'puffbill':
+    case 'mimic':
+    case 'wisp':
+    case 'pellet':
+      initEnemy(e, spec);        // js/enemies.js
+      break;
     case 'letter':
       e.idx = spec.idx;
       e.bobT = Math.random() * 6;

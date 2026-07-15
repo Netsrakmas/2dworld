@@ -88,6 +88,7 @@
   buildDungeon(seedInt);
   buildAtmos(seedInt);
   buildNpcs(seedInt);
+  buildEnemies(seedInt);
   hudSeed.innerHTML = `<small>seed</small> ${seedStr.replace(/[<>&]/g, '')}`;
 
   game.bouldersOpened = new Set();
@@ -335,9 +336,15 @@
       else if (e.kind === 'npc') updateNpc(e, game, dt);
       else if (e.kind === 'pedestal') updatePedestal(e, game, dt);
       else if (e.kind === 'campfire') updateCampfire(e, game, dt);
+      else if (e.kind === 'wiggler') updateWiggler(e, game, dt);
+      else if (e.kind === 'puffbill') updatePuffbill(e, game, dt);
+      else if (e.kind === 'mimic') updateMimic(e, game, dt);
+      else if (e.kind === 'wisp') updateWisp(e, game, dt);
+      else if (e.kind === 'pellet') updatePellet(e, game, dt);
     }
     updateBombItem(game, dt);
     updateEndingCard(game, dt);
+    updateEnemySpawners(game, dt);
     for (let i = game.rings.length - 1; i >= 0; i--) {
       game.rings[i].t += dt;
       if (game.rings[i].t > 0.35) game.rings.splice(i, 1);
@@ -882,6 +889,9 @@
       drawBoulderEntity(ctx, e, x, y);
     } else if (e.kind === 'npc' || e.kind === 'pedestal' || e.kind === 'campfire') {
       drawCampEntity(ctx, game, e, x, y, boil);
+    } else if (e.kind === 'wiggler' || e.kind === 'puffbill' || e.kind === 'mimic' ||
+               e.kind === 'wisp' || e.kind === 'pellet') {
+      drawEnemyEntity(ctx, game, e, x, y, boil);
     } else if (e.kind === 'sign') {
       const spr = SPRITES.sign;
       if (spr.sh) ctx.drawImage(spr.sh, x - spr.ax, y - spr.ay);

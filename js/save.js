@@ -29,6 +29,7 @@ function serializeGame(game, seedStr) {
     bombs: game.bombs ? { count: game.bombs.count, cap: game.bombs.cap } : null,
     hasHat: !!game.hasHat,
     hatReturned: !!game.hatReturned,
+    dropDeck: game.dropDeck | 0,
     camp: game.camp || null,
     dungeons: Dungeon.defs.map((d) => ({
       keys: d.keys, bossKey: d.bossKey,
@@ -64,6 +65,7 @@ function applySave(game, data) {
   if (data.bombs) game.bombs = { count: data.bombs.count, cap: data.bombs.cap, regrowT: 0 };
   game.hasHat = !!data.hasHat;
   game.hatReturned = !!data.hatReturned;
+  game.dropDeck = data.dropDeck | 0;
   if (data.camp) game.camp = data.camp;
   (data.dungeons || []).forEach((sd, i) => {
     const d = Dungeon.defs[i];

@@ -464,3 +464,54 @@ Add a small cast where the two biomes meet. Recipe from the research (RESEARCH.m
 **Generative ambient (Eno with a wind vane):** three independent voices, no tempo grid — melody every 2-8 s from C-major pentatonic (C4-A5), drone C3/G3 every 12-25 s, sparkle octave-6 every 9-20 s. Patch: sine+triangle detuned ±6 cents, attack 150 ms, release ~2 s, lowpass 1500, 45% delay send, 15% rest chance, no immediate note repeats. Night: pool shifts up an octave, intervals ×1.6, lowpass 900, quieter drone. Dungeon: C-minor pentatonic (shared C root — mood switches stay consonant mid-tail). Wind: gusts quicken the melody up to −3 s and feed a looping pink-noise wind bed (lowpass 400+wind·900, gain 0.02+wind·0.05) that goes silent underground. Ducking: down fast (τ 50 ms), up slow (τ 300 ms).
 
 **Acceptance:** every feedback beat from the earlier updates has a voice (hit/finisher/hurt/poof/doors/keys/chests/switches/bombs/boss/shop/fortune/letters/steps/title); ambient notes schedule and stop while muted; zero console errors incl. no autoplay warning; 60 fps unchanged; graph node count bounded (voice cap).
+
+
+---
+
+## THE ENEMY UPDATE (feature-addition prompt — the world learns to bite, gently)
+
+Add 4 overworld enemy species that give the desert a combat identity, the night a reason to exist, and the props a secret. Recipe from the research (RESEARCH.md §13): LA density discipline (~2 per combat screen, 1 in 3 screens peaceful, 3 hostiles on camera max), ALttP damage classes (overworld = ½ heart, never more), Zelda-1 state-timer tables.
+
+**Map of what exists:** overworld creatures in `js/entities.js` (spawnEntity switch + updateOgre/Slime/Watcher), combat hooks (`hittable`, `onStaffHit`, `onDefeat`, `hitEnemy`, `damagePlayer`), deterministic region spawns in `js/world.js` `regionFeature` (uses rolls that MUST NOT be re-ordered — derive new types from the already-rolled `extra` field), day/night via `game.nightFactor()`, camp/stump/skull spots for peace radii. New logic in `js/enemies.js`. Do NOT touch dungeon AI, worldgen noise, or existing enemy behavior.
+
+**Tone rule:** picture-book bibles hold — no blood, palette-locked (shade()/withAlpha() only), flat-vector + offset-shadow desert treatment, wobbly-ink forest treatment; every ambush pays for its surprise with a ≥0.4s harmless, visible anticipation beat. All tunables in one frozen `ENEMIES` block.
+
+### The cast
+
+| species | biome / when | HP | contact | the trick |
+|---|---|---|---|---|
+| **Dune Wiggler** (sand worm, blossom on its brow) | deep desert (blend<0.35), field-spawned | 2 | ½ heart | burrows: hittable ONLY while surfaced |
+| **Puffbill** (round puffing bird) | desert regions, chunk-slotted pairs | 2 | ½ heart | spits straight pellets down cardinal lanes; staff DEFLECTS them back |
+| **Prickling / Shroomling** (prop mimic) | desert cactus / forest mushroom | 2 | 0 (shy) | disguised as a real prop; pops, hops, spits nuts |
+| **Dusk Wisp** (sheet ghost) | both biomes, NIGHT ONLY | 2 | ½ heart | drifts through walls; dawn pops it into a guaranteed trinket harvest |
+
+### Dune Wiggler (Zelda-1 Leever table, scaled to 40px/60Hz)
+- Cycle: BURIED 1.5–2.5s (homes underground at 70 px/s, sand tiles only, ignores props) → MOUND telegraph 0.65s (dark-sand mound scales 1→1.3, ±2px tremble in the last 0.2s, 5 dust motes) → EMERGE 0.2s (rises out of an ellipse clip, NO hitbox) → SURFACED 2.5–4s (chases at 80 px/s) → SUBMERGE 0.25s (invulnerable after 0.1s) → repeat. `hittable` true only while SURFACED/EMERGE-done.
+- Field spawner (not a chunk entity): while the player stands on sand, one spawn roll every 6–10s; ring 4–9 tiles from the player, 60% biased toward the movement direction, never within 2 tiles; **max 2 alive**; all dissolve when the player leaves the desert or >1.5 screens away. Peace radius: none within 10 tiles of spawn origin, the Waystone Camp, or the skull.
+
+### Puffbill (the lane sniper you can outwalk diagonally)
+- Wanders 60 px/s. Fires only when the player is within 6 tiles AND inside a ±1-tile cardinal lane: inflate telegraph 0.4s (scale 1→1.25) → spit 0.25s (pellet 260 px/s, 6-tile range, ½ heart) → deflate recover 0.9s. Deaggro >8 tiles.
+- **Pellets are deflectable**: a staff hit reverses one back along its path; a reflected pellet defeats its owner in one hit (petals + extra trinket).
+- Placement: `regionFeature` desert regions via the existing `extra` roll (no re-rolls): skeleton regions with extra<0.5 host a pair beside the bones; type-less desert regions with extra<0.35 host a lone pair. Never inside the skull apron.
+
+### Prickling / Shroomling (the prop with a secret)
+- DISGUISED: drawn as the real prop sprite +4% warm tint, micro-bob ±0.75px, a 2px shiver every 3–4s; invulnerable BUT a staff bonk triggers the reveal (being pokeable is the tell). Trigger: player within 2.75 tiles → REVEAL 0.45s: 10px fake-z hop + dust ring + '!' — no hitbox during it.
+- ACTIVE: hops toward the player in 90 px/s bursts (slime rhythm), spits a nut every 2.2s (240 px/s, ½ heart, deflectable like pellets); contact harmless (it leans away, it's shy). HP 2.
+- Player >7 tiles for 2s → settles back into disguise over 0.7s (vulnerable while settling).
+- Placement (deterministic, no scatter re-ordering): desert — the lone-cactus filler branch rolls AFTER its existing rng draws; ~10% become Pricklings (max 1/chunk). Forest — slime regions with extra>0.6 add one Shroomling near the slimes.
+- Drops: 2 trinkets, 20% heart.
+
+### Dusk Wisp (night pressure, cozy inversion)
+- Spawns only while `nightFactor() > 0.5`: runtime pool (never chunk state), one roll per 20–30s, ring 7–10 tiles, **max 2 alive**, fade-in 0.8s (alpha 0→0.7, hitbox only past 0.5), never within 6 tiles of the Waystone fire or ogre camps.
+- Drifts 110 px/s at the player, turn rate capped 90°/s + sine weave (circling escapes it), passes through all solids, ½-heart contact, HP 2.
+- Render: alpha breathes 0.55±0.15 at 0.35Hz, bob ±3px at 0.7Hz (per-entity phase), faint ground shadow, additive glow, scalloped sheet-tail.
+- **Dawn harvest:** at dawn each wisp dissolves over 1s (staggered) into sparkles and a GUARANTEED 2-trinket pop — night becomes an opt-in harvest, not a threat.
+
+### Drops — the cycling deck (ALttP prize packs)
+New-enemy defeats consume a fixed 8-slot cycling deck `[trinket, none, heart, trinket, trinket, none, heart, trinket]` (global index, persisted in saves) — generosity with a hard cap on drought streaks.
+
+### Simultaneity acceptance criteria
+Landed hits fire the full existing feedback stack (hitstop/flash/knockback/squash/particles). New beats that must fire together: mound-appear = dark mound + tremble + dust + soft rumble; emerge = body-rise clip + dust burst + no-hitbox; reveal = hop + dust + '!' + alert chirp; deflect = tink + pellet reverse in ONE frame; dawn pop = sparkle burst + trinket spawn + chime.
+
+### Regression checklist
+60 fps with all four active; zero console errors; same seed ⇒ identical prop/skeleton/camp layout (regionFeature roll order untouched — verify against a pre-change world signature); saves round-trip the drop-deck index; no new enemy spawns within the peace radii; nothing aggros off-screen; letters/camps/dungeons unchanged.

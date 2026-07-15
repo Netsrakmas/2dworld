@@ -158,3 +158,17 @@ Sources: MDN Advanced Techniques, web.dev "A tale of two clocks", noisehack (Pau
 - **Mix:** master 0.8, sfx 0.9, music 0.30 (≈ −10 dB under SFX); compressor −18/25/6/3ms/250ms absorbs pile-ups; per-name retrigger throttle + ±10% gain jitter prevents phase-stacked doubling; ~16-24 voice cap is mobile-safe.
 - **Autoplay:** create the context on first trusted gesture (pointerdown/keydown/touchend) and `resume()`; re-resume on visibilitychange. Creating it at page load logs a console warning — lazy creation avoids even that.
 - **Generative ambient:** per-voice independent timers (Music-for-Airports model), 2-8 s melody / 12-25 s drone / 9-20 s sparkle; C-major pentatonic = the storybook default, C-minor pentatonic shares the root for dungeon crossfades; detune ±6 cents = free chorus (>15 = seasick); ducking down τ50 ms, up τ300 ms; rAF-driven scheduling is fine at these timescales and pauses with the tab.
+
+
+---
+
+## §13 addendum — overworld enemy design + implementation (the enemy update)
+
+Sources: LADX-Disassembly entity tables (computed: 36% of LA's 256 overworld screens have zero enemies; combat screens average 2.08, max 6 ever), snesrev/zelda3 (HP: Octorok 2 / Leever 4 / soldiers 4-8 vs 2-dmg sword; contact classes: overworld = ¼-½ heart), aldonunez/Loz + zelda1-disassembly (Leever 6-state timer table {128,32,15,255,16,96} frames; hittable only fully surfaced; red-Leever ambush spawns 2.5 tiles ahead, class-capped at 2), facerix/Canvassa (JS Leever), Minecraft/Terraria spawn rings (no-spawn 24 blocks, despawn >128; Terraria town suppression), ALttP prize packs (cycling 8-slot decks, not rolls), Garden Story / Tunic cozy guardrails, Game Developer telegraphing (≥300ms human floor; cozy 600-900ms).
+
+- Overworld enemies flavor, dungeon enemies gate: everything skippable, roads safe, aggro ≤ half a screen, deaggro + leash at 8-9 tiles, nothing spawns aggroed or on-camera-center.
+- Damage discipline: overworld = ½ heart max at 3-6 hearts; HP 1-2 for trash (dies inside one combo); ≥8 HP is a "please avoid me" signal, not a fight.
+- Every surprise pays an anticipation tax ≥0.4s, visible + harmless (mound before eruption, pop before nut, fade-in before ghost).
+- Fake-z ballistics: pick T and apex H, then v0=4H/T, g=8H/T²; sprite at (x, y−z), shadow at (x,y); shadow IS the telegraph.
+- Deterministic spawn craft: hash positions (never order-dependent RNG); derive NEW region types from already-rolled fields so old worlds keep their layout; field-spawners (Leevers, ghosts) are runtime pools so chunk determinism can't be corrupted by dawn cleanup.
+- Cycling drop decks hard-cap drought streaks and read as generosity.

@@ -159,7 +159,12 @@ function regionFeature(wrx, wry) {
   if (bl < 0.35 && roll < 0.4) type = 'skeleton';
   else if (bl > 0.7 && far && roll < 0.45) type = 'camp';
   else if (bl > 0.55 && roll < 0.5) type = 'slime';
-  return { type, tx: ctx0, ty: cty0, extra };
+  // NEW enemy sub-features derive from the ALREADY-ROLLED extra field so the
+  // rng sequence — and therefore every existing world — stays byte-identical
+  let sub = null;
+  if (bl < 0.35 && ((type === 'skeleton' && extra < 0.5) || (!type && extra < 0.35))) sub = 'puffbills';
+  else if (type === 'slime' && extra > 0.6) sub = 'shroomling';
+  return { type, sub, tx: ctx0, ty: cty0, extra };
 }
 
 function inCampClearing(wtx, wty) {
@@ -656,9 +661,17 @@ function genChunk(cx, cy) {
         } else if (db > 0 && roll < 0.005 * db) {
           cluster('bone', SPRITES.rib, wtx, wty, r, false, false);
         } else if (dc > 0.5 && cn > 0.62 && roll < 0.05) {
-          // patch filler: lone small cactus inside dense flats
-          addProp(SPRITES.cactus, (r() * 6) | 0, wtx, wty, (r() - 0.5) * 14, (r() - 0.5) * 10,
-            true, 0, 0.72 + r() * 0.18, false);
+          // patch filler: lone small cactus inside dense flats. All the rng
+          // draws happen FIRST so non-mimic tiles keep their exact layout —
+          // then a rare few of these loners turn out to be Pricklings.
+          const mv = (r() * 6) | 0, mjx = (r() - 0.5) * 14, mjy = (r() - 0.5) * 10;
+          const msc = 0.72 + r() * 0.18;
+          if (r() < 0.1 && !chunk.hasMimic) {
+            chunk.hasMimic = true;
+            chunk.entities.push({ kind: 'mimic', skin: 'cactus', tx: wtx, ty: wty });
+          } else {
+            addProp(SPRITES.cactus, mv, wtx, wty, mjx, mjy, true, 0, msc, false);
+          }
         }
       } else if (bl > 0.55) {
         // trees are level geometry (forest walls) — the density fields sculpt
@@ -694,11 +707,25 @@ function genChunk(cx, cy) {
   for (let ry = 0; ry < CHUNK / REGION; ry++) {
     for (let rx = 0; rx < CHUNK / REGION; rx++) {
       const feat = regionFeature(r0x + rx, r0y + ry);
-      if (!feat.type) continue;
+      if (!feat.type && !feat.sub) continue;
       const spot = findFreeTile(feat.tx, feat.ty, 4);
       if (!spot) continue;
       const [ftx, fty] = spot;
       const rr = rng2(ftx, fty, World.seedInt ^ 0xFEA);
+
+      // enemy sub-features ride alongside (or instead of) the set dressing
+      if (feat.sub === 'puffbills') {
+        for (const [dx2, dy2] of [[-2, 2], [3, 1]]) {
+          if (tileFreeForProp(ftx + dx2, fty + dy2)) {
+            chunk.entities.push({ kind: 'puffbill', tx: ftx + dx2, ty: fty + dy2 });
+          }
+        }
+      } else if (feat.sub === 'shroomling') {
+        if (tileFreeForProp(ftx + 1, fty - 2)) {
+          chunk.entities.push({ kind: 'mimic', skin: 'shroom', tx: ftx + 1, ty: fty - 2 });
+        }
+      }
+      if (!feat.type) continue;
 
       if (feat.type === 'skeleton') {
         // half-buried giant skeleton
